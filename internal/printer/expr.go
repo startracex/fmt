@@ -12,7 +12,8 @@ import (
 
 func (p *Printer) array(n *ast.Node) *doc.Doc {
 	a := n.AsArrayLiteralExpression()
-	return p.commaGroup("[", "]", listNodes(a.Elements), n.End(), opt.TrailArray, false)
+	els := listNodes(a.Elements)
+	return p.commaGroupBreak("[", "]", els, n.End(), opt.TrailArray, false, p.opensBroken(n, '[', els))
 }
 
 func (p *Printer) object(n *ast.Node) *doc.Doc {
@@ -21,7 +22,43 @@ func (p *Printer) object(n *ast.Node) *doc.Doc {
 		p.forceQuote = objectNeedsQuotes(o.Properties)
 		defer func() { p.forceQuote = false }()
 	}
-	return p.commaGroup("{", "}", listNodes(o.Properties), n.End(), opt.TrailObject, p.opt.BracketSpacing)
+	props := listNodes(o.Properties)
+	return p.commaGroupBreak("{", "}", props, n.End(), opt.TrailObject, p.opt.BracketSpacing, p.opensBroken(n, '{', props))
+}
+
+// opensBroken reports whether the source has a line break between the opening
+// brace or bracket and its first element. Prettier's default objectWrap
+// preserve keeps that collection expanded. Node positions point at leading
+// trivia, so the newline is often the first byte of the child.
+func (p *Printer) opensBroken(n *ast.Node, open byte, elems []*ast.Node) bool {
+	first := firstReal(elems)
+	if n == nil || first == nil {
+		return false
+	}
+	start := n.Pos()
+	end := first.Pos()
+	if start < 0 || end < start || start >= len(p.src) {
+		return false
+	}
+	limit := end + 1
+	if limit > len(p.src) {
+		limit = len(p.src)
+	}
+	chunk := p.src[start:limit]
+	brace := strings.IndexByte(chunk, open)
+	if brace < 0 {
+		return strings.Contains(chunk, "\n")
+	}
+	return strings.Contains(chunk[brace:], "\n")
+}
+
+func firstReal(nodes []*ast.Node) *ast.Node {
+	for _, n := range nodes {
+		if n != nil && !ast.NodeIsMissing(n) {
+			return n
+		}
+	}
+	return nil
 }
 
 func objectNeedsQuotes(list *ast.NodeList) bool {
@@ -168,13 +205,21 @@ func (p *Printer) chain(n *ast.Node) *doc.Doc {
 		return head
 	}
 	var segs []*doc.Doc
+	indent := false
 	for _, l := range links {
 		if chainBreakBefore(l) {
 			segs = append(segs, doc.SoftLine())
+			indent = true
 		}
 		segs = append(segs, p.chainSuffix(l))
 	}
-	return doc.Group(doc.Concat(head, doc.Indent(doc.Concat(segs...))))
+	body := doc.Concat(segs...)
+	// A bare call has no break of its own. Indenting it would add a second
+	// level to the argument object when the call does not fit.
+	if indent {
+		body = doc.Indent(body)
+	}
+	return doc.Group(doc.Concat(head, body))
 }
 
 func chainTarget(n *ast.Node) *ast.Node {
@@ -239,7 +284,73 @@ func (p *Printer) beforeClose(end int) *doc.Doc {
 }
 
 func (p *Printer) callArgs(list *ast.NodeList, end int) *doc.Doc {
-	return p.commaGroup("(", ")", listNodes(list), end, opt.TrailArgs, false)
+	nodes := realNodes(listNodes(list))
+	if len(nodes) == 0 {
+		return doc.Concat(doc.T("("), p.beforeClose(end), doc.T(")"))
+	}
+	last := nodes[len(nodes)-1]
+	// A trailing object or array stays against the call: defineConfig({ ... }).
+	// Two collections of the same kind still break like an ordinary list.
+	if huggable(last) && (len(nodes) == 1 || !sameCollection(nodes[len(nodes)-2], last)) {
+		return p.hugArgs(nodes, end)
+	}
+	return p.commaGroup("(", ")", nodes, end, opt.TrailArgs, false)
+}
+
+func (p *Printer) hugArgs(nodes []*ast.Node, end int) *doc.Doc {
+	if len(nodes) == 1 {
+		return doc.Concat(doc.T("("), p.node(nodes[0]), p.beforeClose(end), doc.T(")"))
+	}
+	head := p.argJoin(nodes[:len(nodes)-1])
+	last := p.node(nodes[len(nodes)-1])
+	close := doc.Concat(p.beforeClose(end), doc.T(")"))
+	return doc.Group(doc.Concat(
+		doc.T("("),
+		doc.Indent(doc.Concat(
+			doc.SoftLine(),
+			head,
+			doc.T(","),
+			doc.Line(),
+			last,
+		)),
+		doc.IfBreak(doc.T(","), nil),
+		doc.SoftLine(),
+		close,
+	))
+}
+
+func (p *Printer) argJoin(nodes []*ast.Node) *doc.Doc {
+	parts := make([]*doc.Doc, 0, len(nodes))
+	for _, n := range nodes {
+		parts = append(parts, p.node(n))
+	}
+	return doc.Join(doc.Concat(doc.T(","), doc.Line()), parts)
+}
+
+func huggable(n *ast.Node) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Kind {
+	case ast.KindObjectLiteralExpression, ast.KindArrayLiteralExpression:
+		return true
+	default:
+		return false
+	}
+}
+
+func sameCollection(a, b *ast.Node) bool {
+	return a != nil && b != nil && a.Kind == b.Kind && huggable(a)
+}
+
+func realNodes(nodes []*ast.Node) []*ast.Node {
+	out := make([]*ast.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n != nil && !ast.NodeIsMissing(n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (p *Printer) newExpr(n *ast.Node) *doc.Doc {

@@ -485,26 +485,22 @@ func (p *Printer) iface(n *ast.Node) *doc.Doc {
 
 func (p *Printer) typeAlias(n *ast.Node) *doc.Doc {
 	t := typeAliasData(n)
-	var body *doc.Doc
-	if t.Type != nil && (t.Type.Kind == ast.KindUnionType || t.Type.Kind == ast.KindIntersectionType) {
-		op := "|"
-		list := t.Type.AsUnionTypeNode().Types
-		if t.Type.Kind == ast.KindIntersectionType {
-			op = "&"
-			list = t.Type.AsIntersectionTypeNode().Types
-		}
-		body = p.unionParts(list, op)
-	} else {
-		body = p.node(t.Type)
-	}
-	return doc.Group(doc.Concat(
+	header := doc.Concat(
 		p.modifiers(n),
 		doc.T("type "),
 		p.node(t.Name()),
 		p.typeParams(t.TypeParameters),
-		doc.T(" ="),
-		doc.Indent(doc.Concat(doc.Line(), body)),
-	))
+	)
+	if t.Type != nil && t.Type.Kind == ast.KindIntersectionType {
+		return doc.Group(doc.Concat(header, doc.T(" = "), p.intersectionParts(t.Type.AsIntersectionTypeNode().Types)))
+	}
+	var body *doc.Doc
+	if t.Type != nil && t.Type.Kind == ast.KindUnionType {
+		body = p.unionParts(t.Type.AsUnionTypeNode().Types, "|")
+	} else {
+		body = p.node(t.Type)
+	}
+	return doc.Group(doc.Concat(header, doc.T(" ="), doc.Indent(doc.Concat(doc.Line(), body))))
 }
 
 func (p *Printer) enum(n *ast.Node) *doc.Doc {

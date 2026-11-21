@@ -127,4 +127,53 @@ func TestSyntaxErrorStatus(t *testing.T) {
 	if code := Main([]string{path}, &stdout, &stderr); code != 2 {
 		t.Fatalf("code %d stderr %s", code, stderr.String())
 	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "let =\n" {
+		t.Fatalf("failed format changed the file: %q", got)
+	}
+}
+
+func TestIntersectionDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "types.ts")
+	src := "export type Foo = Bar & Baz & Qux;\ntype T = A | B;\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("code %d stderr %s", code, stderr.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "panic") || !strings.Contains(string(got), "Bar &") {
+		t.Fatalf("intersection output:\n%s", got)
+	}
+}
+
+func TestWriteAtomicReplacesWholeFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.ts")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(path, []byte("const value = 1;\n")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "const value = 1;\n" {
+		t.Fatalf("got %q", got)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, ".fmt-*"))
+	if len(matches) != 0 {
+		t.Fatalf("temp files left behind: %v", matches)
+	}
 }

@@ -99,7 +99,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			failed++
 			continue
 		}
-		out, err := format.Source(file, string(src), opts)
+		out, err := formatSource(file, string(src), opts)
 		if err != nil {
 			fmt.Fprintf(stderr, "%v\n", err)
 			failed++
@@ -113,7 +113,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, file)
 			continue
 		}
-		if err := os.WriteFile(file, []byte(out), 0o644); err != nil {
+		// Replace the file only after the whole result is ready, so a panic
+		// or a short write cannot leave a truncated source behind.
+		if err := writeAtomic(file, []byte(out)); err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", file, err)
 			failed++
 			continue
@@ -127,6 +129,51 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// formatSource formats one file. A printer panic becomes an error for that
+// file and does not abort the rest of the run or write a partial result.
+func formatSource(file, src string, opts opt.Options) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s: %v", file, r)
+		}
+	}()
+	return format.Source(file, src, opts)
+}
+
+// writeAtomic replaces path by renaming a complete temporary file over it.
+func writeAtomic(path string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".fmt-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 // resolve applies EditorConfig, then the fmt config file, then explicit CLI flags.

@@ -116,6 +116,9 @@ func (p *Printer) typeNode(n *ast.Node) *doc.Doc {
 }
 
 func (p *Printer) unionish(list *ast.NodeList, op string) *doc.Doc {
+	if op == "&" {
+		return doc.Group(p.intersectionParts(list))
+	}
 	return doc.Group(p.unionParts(list, op))
 }
 
@@ -132,6 +135,24 @@ func (p *Printer) unionParts(list *ast.NodeList, op string) *doc.Doc {
 		parts = append(parts, doc.Line(), doc.T(op), doc.T(" "), p.node(n))
 	}
 	return doc.Concat(doc.IfBreak(doc.T(op+" "), nil), doc.Concat(parts...))
+}
+
+// intersectionParts breaks after `&`, so a long alias stays
+// `type Foo = A &\n  B &\n  C` instead of leading operators.
+func (p *Printer) intersectionParts(list *ast.NodeList) *doc.Doc {
+	nodes := listNodes(list)
+	if len(nodes) == 0 {
+		return nil
+	}
+	d := p.node(nodes[0])
+	if len(nodes) == 1 {
+		return d
+	}
+	var cont []*doc.Doc
+	for _, n := range nodes[1:] {
+		cont = append(cont, doc.T(" &"), doc.Line(), p.node(n))
+	}
+	return doc.Concat(d, doc.Indent(doc.Concat(cont...)))
 }
 
 func (p *Printer) namedTuple(n *ast.Node) *doc.Doc {
