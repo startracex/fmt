@@ -5,7 +5,7 @@ import (
 	"github.com/startracex/tsgo/pkg/scanner"
 
 	"github.com/startracex/fmt/doc"
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 func (p *Printer) typeParams(list *ast.NodeList) *doc.Doc {
@@ -92,7 +92,8 @@ func (p *Printer) typeNode(n *ast.Node) *doc.Doc {
 	case ast.KindConditionalType:
 		return p.conditional(n, true)
 	case ast.KindTypeLiteral:
-		return p.memberList(n.AsTypeLiteralNode().Members, n.End(), false)
+		tl := n.AsTypeLiteralNode()
+		return p.memberList(tl.Members, n.End(), p.preserveOpen(n, '{', listNodes(tl.Members)))
 	case ast.KindFunctionType:
 		f := n.AsFunctionTypeNode()
 		return doc.Group(doc.Concat(p.typeParams(f.TypeParameters), p.params(f.Parameters), doc.T(" => "), p.node(f.Type)))

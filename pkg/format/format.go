@@ -12,8 +12,8 @@ import (
 	"github.com/startracex/tsgo/pkg/parser"
 	"github.com/startracex/tsgo/pkg/tspath"
 
-	"github.com/startracex/fmt/internal/opt"
-	"github.com/startracex/fmt/internal/printer"
+	"github.com/startracex/fmt/pkg/opt"
+	"github.com/startracex/fmt/pkg/printer"
 )
 
 // Options controls layout. See [DefaultOptions].

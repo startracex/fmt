@@ -16,6 +16,9 @@ type Options struct {
 	ArrowParens    string // always, avoid
 	EndOfLine      string // lf, crlf, cr
 	QuoteProps     string // as-needed, consistent, preserve
+	// ObjectWrap is preserve or collapse. preserve keeps a collection expanded
+	// when the source has a line break after { or [.
+	ObjectWrap string
 }
 
 // Default returns Prettier-like defaults: width 80, two spaces, semicolons,
@@ -30,6 +33,7 @@ func Default() Options {
 		ArrowParens:    "always",
 		EndOfLine:      "lf",
 		QuoteProps:     "as-needed",
+		ObjectWrap:     "preserve",
 	}
 }
 
@@ -46,6 +50,7 @@ type Partial struct {
 	ArrowParens    *string `json:"arrowParens"`
 	EndOfLine      *string `json:"endOfLine"`
 	QuoteProps     *string `json:"quoteProps"`
+	ObjectWrap     *string `json:"objectWrap"`
 }
 
 // Merge returns a copy of p with every non-nil field of over applied on top.
@@ -79,6 +84,9 @@ func (p Partial) Merge(over Partial) Partial {
 	}
 	if over.QuoteProps != nil {
 		p.QuoteProps = over.QuoteProps
+	}
+	if over.ObjectWrap != nil {
+		p.ObjectWrap = over.ObjectWrap
 	}
 	return p
 }
@@ -116,6 +124,9 @@ func (p Partial) Resolve() Options {
 	if p.QuoteProps != nil {
 		o.QuoteProps = strings.ToLower(*p.QuoteProps)
 	}
+	if p.ObjectWrap != nil {
+		o.ObjectWrap = strings.ToLower(*p.ObjectWrap)
+	}
 	return o.Normalized()
 }
 
@@ -141,6 +152,11 @@ func (o Options) Normalized() Options {
 	case "as-needed", "consistent", "preserve":
 	default:
 		o.QuoteProps = d.QuoteProps
+	}
+	switch o.ObjectWrap {
+	case "preserve", "collapse":
+	default:
+		o.ObjectWrap = d.ObjectWrap
 	}
 	if o.PrintWidth < 0 {
 		o.PrintWidth = d.PrintWidth

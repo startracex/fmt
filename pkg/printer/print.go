@@ -12,7 +12,7 @@ import (
 	"github.com/startracex/tsgo/pkg/scanner"
 
 	"github.com/startracex/fmt/doc"
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 // Printer builds a document for one source file.

@@ -98,6 +98,38 @@ func BreakGroup(d *Doc) *Doc {
 	return g
 }
 
+// ForcesBreak reports whether d cannot be printed on one line.
+// A hard break counts even inside a nested group. A group that was built to
+// expand also counts. Soft breaks do not.
+func ForcesBreak(d *Doc) bool {
+	if d == nil {
+		return false
+	}
+	switch d.kind {
+	case kindLine:
+		return d.hard
+	case kindIfBreak:
+		return ForcesBreak(d.flatDoc)
+	case kindGroup:
+		if d.shouldBreak {
+			return true
+		}
+		for _, p := range d.parts {
+			if ForcesBreak(p) {
+				return true
+			}
+		}
+		return false
+	default:
+		for _, p := range d.parts {
+			if ForcesBreak(p) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 // ContainsHard reports whether d contains a hard line break.
 func ContainsHard(d *Doc) bool {
 	if d == nil {

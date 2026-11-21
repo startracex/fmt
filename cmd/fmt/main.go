@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/startracex/fmt/internal/cli"
+	"github.com/startracex/fmt/pkg/cli"
 )
 
 func main() {

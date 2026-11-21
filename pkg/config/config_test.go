@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 func TestExplicitZeroIsSet(t *testing.T) {

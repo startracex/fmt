@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/startracex/fmt/internal/config"
-	"github.com/startracex/fmt/internal/editorconfig"
-	"github.com/startracex/fmt/internal/ignore"
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/config"
+	"github.com/startracex/fmt/pkg/editorconfig"
 	"github.com/startracex/fmt/pkg/format"
+	"github.com/startracex/fmt/pkg/ignore"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 // Main runs the formatter and returns a process status.
@@ -32,6 +32,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	arrow := fs.String("arrow-parens", "", "always or avoid")
 	eol := fs.String("end-of-line", "", "lf, crlf, or cr")
 	quotes := fs.String("quote-props", "", "as-needed, consistent, or preserve")
+	objectWrap := fs.String("object-wrap", "", "preserve or collapse")
 	configPath := fs.String("config", "", "config file (default: nearest .fmtrc.json)")
 	ignorePath := fs.String("ignore-path", "", "ignore file (default: nearest .fmtignore)")
 	stdinPath := fs.String("stdin-filepath", "stdin.ts", "path used for stdin language and config lookup")
@@ -47,7 +48,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	flags := flagPartial(fs, *printWidth, *tabWidth, *useTabs, *semi, *single, *trailing, *bracket, *arrow, *eol, *quotes)
+	flags := flagPartial(fs, *printWidth, *tabWidth, *useTabs, *semi, *single, *trailing, *bracket, *arrow, *eol, *quotes, *objectWrap)
 	paths := fs.Args()
 	if len(paths) == 0 {
 		data, err := io.ReadAll(os.Stdin)
@@ -204,7 +205,7 @@ func resolve(filename, explicit string, flags opt.Partial, stderr io.Writer) opt
 	return partial.Merge(flags).Resolve()
 }
 
-func flagPartial(fs *flag.FlagSet, width, tab int, tabs, semi, single bool, trailing string, bracket bool, arrow, eol, quotes string) opt.Partial {
+func flagPartial(fs *flag.FlagSet, width, tab int, tabs, semi, single bool, trailing string, bracket bool, arrow, eol, quotes, objectWrap string) opt.Partial {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
 	var p opt.Partial
@@ -241,6 +242,10 @@ func flagPartial(fs *flag.FlagSet, width, tab int, tabs, semi, single bool, trai
 	if set["quote-props"] {
 		v := strings.ToLower(quotes)
 		p.QuoteProps = &v
+	}
+	if set["object-wrap"] {
+		v := strings.ToLower(objectWrap)
+		p.ObjectWrap = &v
 	}
 	return p
 }

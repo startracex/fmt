@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/startracex/fmt/internal/config"
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/config"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 func TestAppliesWhenUnset(t *testing.T) {

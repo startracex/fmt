@@ -2,7 +2,7 @@
 
 A TypeScript and JavaScript formatter. It parses with [tsgo](https://github.com/startracex/tsgo) and reprints the AST through a width-aware document, in the same spirit as Prettier and oxfmt. The printer does not call tsgo's language-service formatter. That API only tweaks whitespace and will not wrap to a print width.
 
-The library is `pkg/format`. The command is `cmd/fmt`. Defaults match Prettier (print width 80, indent 2, semicolons, double quotes, trailing commas). Remaining differences are listed below.
+The library packages live under `pkg/` (`format`, `printer`, `config`, `editorconfig`, `ignore`, `opt`, and the CLI helpers in `cli`). The command is `cmd/fmt`. Defaults match Prettier (print width 80, indent 2, semicolons, double quotes, trailing commas, `objectWrap: "preserve"`). Remaining differences are listed below.
 
 ## Install
 
@@ -51,13 +51,14 @@ The fmt config is the nearest `.fmtrc.json`, `fmt.config.json`, `.fmtrc`, or `pa
   "bracketSpacing": true,
   "arrowParens": "always",
   "endOfLine": "lf",
-  "quoteProps": "as-needed"
+  "quoteProps": "as-needed",
+  "objectWrap": "preserve"
 }
 ```
 
-`trailingComma` is `all`, `es5`, or `none`. `arrowParens` is `always` or `avoid`. `endOfLine` is `lf`, `crlf`, or `cr`. `quoteProps` is `as-needed`, `consistent`, or `preserve`.
+`trailingComma` is `all`, `es5`, or `none`. `arrowParens` is `always` or `avoid`. `endOfLine` is `lf`, `crlf`, or `cr`. `quoteProps` is `as-needed`, `consistent`, or `preserve`. `objectWrap` is `preserve` or `collapse`. `preserve` keeps an object or array expanded when the source breaks after `{` or `[`, and keeps it on one line when it was already one line and still fits. `collapse` fits a collection on one line whenever it can.
 
-EditorConfig (`.editorconfig`, walking parents until `root = true`) fills any fmt option it can speak for and that the fmt config left unset:
+EditorConfig (`.editorconfig`, walking parents until `root = true`, parsed with [editorconfig-core-go](https://github.com/editorconfig/editorconfig-core-go)) fills any fmt option it can speak for and that the fmt config left unset:
 
 | EditorConfig | fmt |
 | --- | --- |

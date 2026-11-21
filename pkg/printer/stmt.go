@@ -5,7 +5,7 @@ import (
 	"github.com/startracex/tsgo/pkg/scanner"
 
 	"github.com/startracex/fmt/doc"
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 func (p *Printer) block(n *ast.Node) *doc.Doc {
@@ -112,7 +112,7 @@ func (p *Printer) nameInit(name *doc.Doc, definite bool, typ, init *ast.Node) *d
 		if jsx, ok := jsxInner(init); ok {
 			d = doc.Concat(d, p.jsxBreak(" = ", " = (", jsx))
 		} else {
-			d = doc.Group(doc.Concat(d, doc.T(" ="), doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(init))))))
+			d = p.withValue(d, " = ", " =", init)
 		}
 	}
 	return d
@@ -149,7 +149,7 @@ func (p *Printer) bindingElem(n *ast.Node) *doc.Doc {
 		d = doc.Concat(d, p.binding(b.Name()))
 	}
 	if b.Initializer != nil {
-		d = doc.Group(doc.Concat(d, doc.T(" ="), doc.Indent(doc.Concat(doc.Line(), p.node(b.Initializer)))))
+		d = p.withValue(d, " = ", " =", b.Initializer)
 	}
 	return d
 }
@@ -264,7 +264,7 @@ func (p *Printer) returnStmt(n *ast.Node) *doc.Doc {
 	if jsx, ok := jsxInner(e); ok {
 		return p.jsxBreak("return ", "return (", jsx)
 	}
-	return doc.Group(doc.Concat(doc.T("return"), doc.Indent(doc.Concat(doc.Line(), p.node(e)))))
+	return p.withValue(doc.T("return"), " ", "", e)
 }
 
 // jsxBreak prints a JSX expression. The flat form has no parentheses. The
@@ -500,6 +500,9 @@ func (p *Printer) typeAlias(n *ast.Node) *doc.Doc {
 	} else {
 		body = p.node(t.Type)
 	}
+	if t.Type != nil && hugValue(t.Type) {
+		return doc.Group(doc.Concat(header, doc.T(" = "), body))
+	}
 	return doc.Group(doc.Concat(header, doc.T(" ="), doc.Indent(doc.Concat(doc.Line(), body))))
 }
 
@@ -510,7 +513,7 @@ func (p *Printer) enum(n *ast.Node) *doc.Doc {
 
 func (p *Printer) enumBody(members *ast.NodeList, end int) *doc.Doc {
 	nodes := listNodes(members)
-	return p.commaGroupBreak("{", "}", nodes, end, opt.TrailObject, p.opt.BracketSpacing, len(nodes) > 0)
+	return p.commaGroupBreak("{", "}", nodes, end, opt.TrailObject, p.opt.BracketSpacing, len(nodes) > 0, false)
 }
 
 func (p *Printer) enumMember(n *ast.Node) *doc.Doc {
@@ -518,7 +521,7 @@ func (p *Printer) enumMember(n *ast.Node) *doc.Doc {
 	if e.Initializer == nil {
 		return p.propName(e.Name())
 	}
-	return doc.Group(doc.Concat(p.propName(e.Name()), doc.T(" ="), doc.Indent(doc.Concat(doc.Line(), p.node(e.Initializer)))))
+	return p.withValue(p.propName(e.Name()), " = ", " =", e.Initializer)
 }
 
 func (p *Printer) module(n *ast.Node) *doc.Doc {
@@ -780,6 +783,14 @@ func (p *Printer) memberList(list *ast.NodeList, end int, expand bool) *doc.Doc 
 	dangle := p.commentLines(p.takeUntil(end))
 	inner := doc.Concat(openBreak, body)
 	force := expand
+	if !force {
+		for _, part := range parts {
+			if doc.ForcesBreak(part) {
+				force = true
+				break
+			}
+		}
+	}
 	if dangle != nil {
 		inner = doc.Concat(inner, doc.HardLine(), dangle)
 		force = true

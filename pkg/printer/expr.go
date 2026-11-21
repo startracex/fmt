@@ -7,13 +7,13 @@ import (
 	"github.com/startracex/tsgo/pkg/scanner"
 
 	"github.com/startracex/fmt/doc"
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 func (p *Printer) array(n *ast.Node) *doc.Doc {
 	a := n.AsArrayLiteralExpression()
 	els := listNodes(a.Elements)
-	return p.commaGroupBreak("[", "]", els, n.End(), opt.TrailArray, false, p.opensBroken(n, '[', els))
+	return p.commaGroupBreak("[", "]", els, n.End(), opt.TrailArray, false, p.preserveOpen(n, '[', els), true)
 }
 
 func (p *Printer) object(n *ast.Node) *doc.Doc {
@@ -23,7 +23,16 @@ func (p *Printer) object(n *ast.Node) *doc.Doc {
 		defer func() { p.forceQuote = false }()
 	}
 	props := listNodes(o.Properties)
-	return p.commaGroupBreak("{", "}", props, n.End(), opt.TrailObject, p.opt.BracketSpacing, p.opensBroken(n, '{', props))
+	return p.commaGroupBreak("{", "}", props, n.End(), opt.TrailObject, p.opt.BracketSpacing, p.preserveOpen(n, '{', props), true)
+}
+
+// preserveOpen reports whether objectWrap should keep this collection expanded
+// because the source breaks after the opening brace or bracket.
+func (p *Printer) preserveOpen(n *ast.Node, open byte, elems []*ast.Node) bool {
+	if p.opt.ObjectWrap == "collapse" {
+		return false
+	}
+	return p.opensBroken(n, open, elems)
 }
 
 // opensBroken reports whether the source has a line break between the opening
@@ -98,10 +107,10 @@ func propertyNameOf(n *ast.Node) *ast.Node {
 }
 
 func (p *Printer) commaGroup(open, close string, nodes []*ast.Node, end int, trail opt.TrailKind, bracketSpace bool) *doc.Doc {
-	return p.commaGroupBreak(open, close, nodes, end, trail, bracketSpace, false)
+	return p.commaGroupBreak(open, close, nodes, end, trail, bracketSpace, false, false)
 }
 
-func (p *Printer) commaGroupBreak(open, close string, nodes []*ast.Node, end int, trail opt.TrailKind, bracketSpace, force bool) *doc.Doc {
+func (p *Printer) commaGroupBreak(open, close string, nodes []*ast.Node, end int, trail opt.TrailKind, bracketSpace, force, expandChildren bool) *doc.Doc {
 	var elems []*doc.Doc
 	for _, n := range nodes {
 		if n == nil || ast.NodeIsMissing(n) {
@@ -109,20 +118,26 @@ func (p *Printer) commaGroupBreak(open, close string, nodes []*ast.Node, end int
 		}
 		elems = append(elems, p.node(n))
 	}
+	// A method body or an already-expanded child cannot share the line.
+	// Calls pass expandChildren false and decide with callChildBreaks.
+	if !force && expandChildren {
+		for _, el := range elems {
+			if doc.ForcesBreak(el) {
+				force = true
+				break
+			}
+		}
+	}
+	return p.groupElems(open, close, elems, end, trail, bracketSpace, force)
+}
+
+func (p *Printer) groupElems(open, close string, elems []*doc.Doc, end int, trail opt.TrailKind, bracketSpace, force bool) *doc.Doc {
 	dangle := p.commentLines(p.takeUntil(end))
 	if len(elems) == 0 && dangle == nil {
 		return doc.T(open + close)
 	}
 	var body *doc.Doc
 	if len(elems) > 0 {
-		if !force {
-			for _, el := range elems {
-				if doc.ContainsHard(el) {
-					force = true
-					break
-				}
-			}
-		}
 		body = doc.Join(doc.Concat(doc.T(","), doc.Line()), elems)
 		if p.opt.Trailing(trail) {
 			body = doc.Concat(body, doc.IfBreak(doc.T(","), nil))
@@ -150,19 +165,14 @@ func (p *Printer) commaGroupBreak(open, close string, nodes []*ast.Node, end int
 
 func (p *Printer) propAssign(n *ast.Node) *doc.Doc {
 	a := n.AsPropertyAssignment()
-	return doc.Group(doc.Concat(
-		p.modifiers(n),
-		p.propName(a.Name()),
-		doc.T(":"),
-		doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(a.Initializer)))),
-	))
+	return p.withValue(doc.Concat(p.modifiers(n), p.propName(a.Name())), ": ", ":", a.Initializer)
 }
 
 func (p *Printer) shorthand(n *ast.Node) *doc.Doc {
 	s := n.AsShorthandPropertyAssignment()
 	d := doc.Concat(p.modifiers(n), p.propName(s.Name()))
 	if s.ObjectAssignmentInitializer != nil {
-		d = doc.Group(doc.Concat(d, doc.T(" ="), doc.Indent(doc.Concat(doc.Line(), p.node(s.ObjectAssignmentInitializer)))))
+		d = p.withValue(d, " = ", " =", s.ObjectAssignmentInitializer)
 	}
 	return d
 }
@@ -288,43 +298,96 @@ func (p *Printer) callArgs(list *ast.NodeList, end int) *doc.Doc {
 	if len(nodes) == 0 {
 		return doc.Concat(doc.T("("), p.beforeClose(end), doc.T(")"))
 	}
-	last := nodes[len(nodes)-1]
-	// A trailing object or array stays against the call: defineConfig({ ... }).
-	// Two collections of the same kind still break like an ordinary list.
-	if huggable(last) && (len(nodes) == 1 || !sameCollection(nodes[len(nodes)-2], last)) {
-		return p.hugArgs(nodes, end)
-	}
-	return p.commaGroup("(", ")", nodes, end, opt.TrailArgs, false)
-}
-
-func (p *Printer) hugArgs(nodes []*ast.Node, end int) *doc.Doc {
-	if len(nodes) == 1 {
+	// A single object, array, or function stays against the parenthesis:
+	// defineConfig({ ... }) and beforeEach(() => { ... }).
+	if len(nodes) == 1 && (huggable(nodes[0]) || isFuncExpr(nodes[0])) {
 		return doc.Concat(doc.T("("), p.node(nodes[0]), p.beforeClose(end), doc.T(")"))
 	}
-	head := p.argJoin(nodes[:len(nodes)-1])
-	last := p.node(nodes[len(nodes)-1])
-	close := doc.Concat(p.beforeClose(end), doc.T(")"))
-	return doc.Group(doc.Concat(
-		doc.T("("),
-		doc.Indent(doc.Concat(
-			doc.SoftLine(),
-			head,
-			doc.T(","),
-			doc.Line(),
-			last,
-		)),
-		doc.IfBreak(doc.T(","), nil),
-		doc.SoftLine(),
-		close,
-	))
+	// Prettier breaks a call of two or more arguments when another argument is
+	// a call that itself takes a function, even when the flat line would fit:
+	// this.timers.set(host, setInterval(() => this.refreshHost(host), ms)).
+	// Two function arguments break the same way. A trailing callback does not
+	// by itself: describe("name", () => { ... }) stays on one line when it fits.
+	elems := make([]*doc.Doc, 0, len(nodes))
+	for _, n := range nodes {
+		elems = append(elems, p.node(n))
+	}
+	force := callMustBreak(nodes) || callChildBreaks(nodes, elems)
+	return p.groupElems("(", ")", elems, end, opt.TrailArgs, false, force)
 }
 
-func (p *Printer) argJoin(nodes []*ast.Node) *doc.Doc {
-	parts := make([]*doc.Doc, 0, len(nodes))
-	for _, n := range nodes {
-		parts = append(parts, p.node(n))
+// callChildBreaks reports whether an argument that is not a hugged tail
+// cannot share the call's first line. A trailing function, object, or array
+// may break inside itself. A function that is the first of exactly two
+// arguments stays inline: foo(() => { ... }, x). Anything else expands the
+// list, which is why new SWRController(host, key, () => { ... }, extra) breaks.
+func callChildBreaks(nodes []*ast.Node, elems []*doc.Doc) bool {
+	if len(nodes) == 0 || len(nodes) != len(elems) {
+		return false
 	}
-	return doc.Join(doc.Concat(doc.T(","), doc.Line()), parts)
+	last := nodes[len(nodes)-1]
+	hugLast := huggable(last) || isFuncExpr(last)
+	for i, el := range elems {
+		if hugLast && i == len(nodes)-1 {
+			continue
+		}
+		if !doc.ForcesBreak(el) {
+			continue
+		}
+		if len(nodes) == 2 && i == 0 && isBlockFunc(nodes[0]) && !huggable(nodes[1]) && !isFuncExpr(nodes[1]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isBlockFunc(n *ast.Node) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Kind {
+	case ast.KindFunctionExpression:
+		return true
+	case ast.KindArrowFunction:
+		body := n.AsArrowFunction().Body
+		return body != nil && body.Kind == ast.KindBlock
+	default:
+		return false
+	}
+}
+
+func callMustBreak(nodes []*ast.Node) bool {
+	if len(nodes) <= 1 {
+		return false
+	}
+	funcs := 0
+	for _, n := range nodes {
+		if isFuncExpr(n) {
+			funcs++
+			if funcs > 1 {
+				return true
+			}
+			continue
+		}
+		for _, arg := range directCallArgs(n) {
+			if isFuncExpr(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isFuncExpr(n *ast.Node) bool {
+	return n != nil && (n.Kind == ast.KindArrowFunction || n.Kind == ast.KindFunctionExpression)
+}
+
+func directCallArgs(n *ast.Node) []*ast.Node {
+	if n == nil || n.Kind != ast.KindCallExpression {
+		return nil
+	}
+	return realNodes(listNodes(n.AsCallExpression().Arguments))
 }
 
 func huggable(n *ast.Node) bool {
@@ -337,10 +400,6 @@ func huggable(n *ast.Node) bool {
 	default:
 		return false
 	}
-}
-
-func sameCollection(a, b *ast.Node) bool {
-	return a != nil && b != nil && a.Kind == b.Kind && huggable(a)
 }
 
 func realNodes(nodes []*ast.Node) []*ast.Node {
@@ -454,12 +513,7 @@ func (p *Printer) binary(n *ast.Node) *doc.Doc {
 		return p.sequence(n)
 	}
 	if isAssign(op) {
-		return doc.Group(doc.Concat(
-			p.node(b.Left),
-			doc.T(" "),
-			doc.T(scanner.TokenToString(op)),
-			doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(b.Right)))),
-		))
+		return p.withValue(doc.Concat(p.node(b.Left), doc.T(" "), doc.T(scanner.TokenToString(op))), " ", "", b.Right)
 	}
 	ops, operands := p.binaryDocs(n, prec(op))
 	if len(operands) == 0 {
@@ -585,7 +639,40 @@ func (p *Printer) arrow(n *ast.Node) *doc.Doc {
 	if jsx, ok := jsxInner(a.Body); ok {
 		return doc.Concat(head, p.jsxBreak(" ", " (", jsx))
 	}
-	return doc.Group(doc.Concat(head, doc.Indent(doc.Concat(doc.Line(), p.node(a.Body)))))
+	// Keep `{` or `(` of a hugged body on the arrow. Other bodies may break.
+	return p.withValue(head, " ", "", a.Body)
+}
+
+// withValue prints head and value. inline is the flat join (` = `, `: `, ` `).
+// broken is printed before the indented break (` =`, `:`, or empty).
+// Objects, arrays, and functions use inline so `{` stays on the head's line
+// and the collection breaks inside itself.
+func (p *Printer) withValue(head *doc.Doc, inline, broken string, value *ast.Node) *doc.Doc {
+	if value == nil {
+		return head
+	}
+	if hugValue(value) {
+		return doc.Group(doc.Concat(head, doc.T(inline), p.node(value)))
+	}
+	return doc.Group(doc.Concat(head, doc.T(broken), doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(value))))))
+}
+
+// hugValue reports whether value should stay attached to `=`, `:`, or `=>`.
+func hugValue(n *ast.Node) bool {
+	for n != nil && n.Kind == ast.KindParenthesizedExpression {
+		n = n.AsParenthesizedExpression().Expression
+	}
+	if n == nil {
+		return false
+	}
+	switch n.Kind {
+	case ast.KindObjectLiteralExpression, ast.KindArrayLiteralExpression,
+		ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindClassExpression,
+		ast.KindTypeLiteral:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Printer) singleArrowParam(a *ast.ArrowFunction) bool {

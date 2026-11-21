@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/opt"
 )
 
 // names are searched from a file's directory upward.
@@ -103,5 +103,6 @@ func decode(data []byte) (opt.Partial, error) {
 	partial.ArrowParens = lower(partial.ArrowParens)
 	partial.EndOfLine = lower(partial.EndOfLine)
 	partial.QuoteProps = lower(partial.QuoteProps)
+	partial.ObjectWrap = lower(partial.ObjectWrap)
 	return partial, nil
 }
