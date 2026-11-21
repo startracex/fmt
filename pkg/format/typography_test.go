@@ -186,6 +186,52 @@ func TestCallbackInTheMiddleBreaksTheCall(t *testing.T) {
 	}
 }
 
+func TestDecoratorBeforeExport(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{
+			"@dec()\nexport class Foo {}\n",
+			"@dec()\nexport class Foo {}\n",
+		},
+		{
+			"@dec()\nexport default class Foo {}\n",
+			"@dec()\nexport default class Foo {}\n",
+		},
+		{
+			"@dec()\nexport default abstract class Foo {}\n",
+			"@dec()\nexport default abstract class Foo {}\n",
+		},
+		{
+			"@dec()\nabstract class Foo {}\n",
+			"@dec()\nabstract class Foo {}\n",
+		},
+		{
+			"@dec()\nclass Foo {}\n",
+			"@dec()\nclass Foo {}\n",
+		},
+		{
+			"@dec()\nexport function f() {}\n",
+			"@dec()\nexport function f() {}\n",
+		},
+		{
+			"@dec()\nexport abstract class Foo {}\n",
+			"@dec()\nexport abstract class Foo {}\n",
+		},
+		{
+			"class A {\n  @dec()\n  method() {}\n  @dec()\n  field = 1;\n}\n",
+			"class A {\n  @dec()\n  method() {}\n  @dec()\n  field = 1;\n}\n",
+		},
+	}
+	for _, tc := range cases {
+		out := mustFormat(t, "dec.ts", tc.src, DefaultOptions())
+		if out != tc.want {
+			t.Fatalf("decorator spacing\nsrc:\n%sgot:\n%swant:\n%s", tc.src, out, tc.want)
+		}
+		if strings.Contains(out, "\n export") || strings.Contains(out, "\n class") || strings.Contains(out, "\n abstract") || strings.Contains(out, "\n function") {
+			t.Fatalf("leading space after decorator:\n%s", out)
+		}
+	}
+}
+
 func TestArrowBreaksAfterFatArrow(t *testing.T) {
 	src := "export const isDisabledKey = (key: unknown): boolean => key === null || key === undefined || key === false;\n"
 	want := "export const isDisabledKey = (key: unknown): boolean =>\n" +

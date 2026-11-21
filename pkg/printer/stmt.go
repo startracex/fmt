@@ -605,9 +605,30 @@ func (p *Printer) heritage(n *ast.Node) *doc.Doc {
 	els := listNodes(h.Types)
 	var parts []*doc.Doc
 	for _, e := range els {
-		parts = append(parts, p.node(e))
+		parts = append(parts, p.heritageType(e))
 	}
 	return doc.Concat(doc.T(kw), doc.T(" "), doc.Join(doc.Concat(doc.T(","), doc.Line()), parts))
+}
+
+// heritageType parenthesizes a broken superclass so a long member chain stays
+// grouped: `extends (\n  a.b.c\n)`.
+func (p *Printer) heritageType(n *ast.Node) *doc.Doc {
+	if n == nil || n.Kind != ast.KindExpressionWithTypeArguments {
+		return p.node(n)
+	}
+	e := n.AsExpressionWithTypeArguments()
+	expr := e.Expression
+	body := p.node(expr)
+	simple := expr == nil || expr.Kind == ast.KindIdentifier || expr.Kind == ast.KindThisKeyword
+	if !simple {
+		body = doc.Group(doc.Concat(
+			doc.IfBreak(doc.T("("), nil),
+			doc.Indent(doc.Concat(doc.SoftLine(), body)),
+			doc.SoftLine(),
+			doc.IfBreak(doc.T(")"), nil),
+		))
+	}
+	return doc.Concat(body, p.typeArgs(e.TypeArguments))
 }
 
 func (p *Printer) importDecl(n *ast.Node) *doc.Doc {

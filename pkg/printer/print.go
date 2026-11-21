@@ -248,7 +248,12 @@ func (p *Printer) dispatch(n *ast.Node) *doc.Doc {
 	case ast.KindArrowFunction:
 		return p.arrow(n)
 	case ast.KindParenthesizedExpression:
-		return doc.Concat(doc.T("("), p.node(n.AsParenthesizedExpression().Expression), doc.T(")"))
+		inner := n.AsParenthesizedExpression().Expression
+		body := p.node(inner)
+		if inner != nil && needsParens(inner) {
+			return doc.Concat(doc.T("("), body, doc.T(")"))
+		}
+		return body
 	case ast.KindArrayLiteralExpression:
 		return p.array(n)
 	case ast.KindObjectLiteralExpression:
@@ -491,23 +496,30 @@ func (p *Printer) modifiers(n *ast.Node) *doc.Doc {
 		return nil
 	}
 	var parts []*doc.Doc
+	// broke is set after a decorator's hard line so the next keyword is not
+	// indented with a leftover space: "@dec()\nexport class", not "\n export".
+	broke := false
 	for _, mod := range m.Nodes {
 		if mod.Kind == ast.KindDecorator {
-			if len(parts) > 0 {
+			if len(parts) > 0 && !broke {
 				parts = append(parts, doc.HardLine())
 			}
 			parts = append(parts, p.node(mod), doc.HardLine())
+			broke = true
 			continue
 		}
-		if len(parts) > 0 {
+		if len(parts) > 0 && !broke {
 			parts = append(parts, doc.T(" "))
 		}
+		broke = false
 		parts = append(parts, p.node(mod))
 	}
 	if len(parts) == 0 {
 		return nil
 	}
-	parts = append(parts, doc.T(" "))
+	if !broke {
+		parts = append(parts, doc.T(" "))
+	}
 	return doc.Concat(parts...)
 }
 

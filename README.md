@@ -94,7 +94,7 @@ func main() {
 
 `go test -run TestPrettierCompat ./pkg/format` replays Prettier 3.6.2's JavaScript, JSX, and TypeScript format snapshots in `testdata/prettier`. Each case uses the options recorded in the snapshot. Flow-only cases, range formatting, and experimental Prettier options are excluded. Syntax tsgo cannot parse is skipped and is not part of the parsed rate.
 
-Current result: **35.08%** of parsed fixtures match (617/1759). Including skips, **30.53%** (617/2021). The breakdown and the remaining failure groups are in [COMPATIBILITY.md](COMPATIBILITY.md).
+Current result: **35.25%** of parsed fixtures match (620/1759). Including skips, **30.68%** (620/2021). The breakdown and the remaining failure groups are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Known differences from Prettier and oxfmt
 
