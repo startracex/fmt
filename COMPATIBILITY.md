@@ -4,10 +4,10 @@ Measured by `go test -run TestPrettierCompat ./pkg/format` against the vendored 
 
 | Set | Passed | Failed | Skipped | Parsed rate | Including skips |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| JavaScript | 347 | 665 | 223 | 34.29% (347/1012) | 28.10% (347/1235) |
+| JavaScript | 352 | 660 | 223 | 34.78% (352/1012) | 28.50% (352/1235) |
 | JSX | 37 | 83 | 10 | 30.83% (37/120) | 28.46% (37/130) |
-| TypeScript | 236 | 391 | 29 | 37.64% (236/627) | 35.98% (236/656) |
-| Combined | 620 | 1139 | 262 | 35.25% (620/1759) | 30.68% (620/2021) |
+| TypeScript | 237 | 390 | 29 | 37.80% (237/627) | 36.13% (237/656) |
+| Combined | 626 | 1133 | 262 | 35.59% (626/1759) | 30.97% (626/2021) |
 
 The parsed rate is passed / (passed + failed). Skips are not failures.
 
@@ -20,14 +20,14 @@ The parsed rate is passed / (passed + failed). Skips are not failures.
 
 ## Remaining failures
 
-Among the 1139 mismatches, the groups are:
+Among the 1133 mismatches, the groups are:
 
-- 319 content differs (tokens, not only whitespace)
-- 265 breaks only (same tokens, different wrapping)
-- 187 comments moved
-- 219 parentheses only
+- 318 content differs (tokens, not only whitespace)
+- 274 breaks only (same tokens, different wrapping)
+- 197 comments moved
+- 198 parentheses only
 - 67 semicolons
-- 50 comment text or placement that also changes the token stream
+- 47 comment text or placement that also changes the token stream
 - 30 semicolons mixed into a larger diff
 - 2 quotes
 

@@ -47,13 +47,18 @@ func (p *Printer) array(n *ast.Node) *doc.Doc {
 		}
 		return doc.Group(doc.Concat(doc.T("["), doc.Indent(doc.Concat(doc.HardLine(), dangle)), doc.HardLine(), doc.T("]")))
 	}
+	preserve := p.preserveOpen(n, '[', els)
 	body := doc.Concat(parts...)
 	if lastHole {
 		body = doc.Concat(body, doc.T(","))
+	} else if conciseNumbers(els) && !preserve {
+		// A preserved break stays one element per line. A single-line array
+		// that does not fit packs numbers the way Prettier's fill does.
+		body = numericFill(printed, p.opt.Trailing(opt.TrailArray))
 	} else if p.opt.Trailing(opt.TrailArray) {
 		body = doc.Concat(body, doc.IfBreak(doc.T(","), nil))
 	}
-	force := p.preserveOpen(n, '[', els)
+	force := preserve
 	if !force {
 		for _, el := range printed {
 			if doc.ForcesBreak(el) {
@@ -73,6 +78,56 @@ func (p *Printer) array(n *ast.Node) *doc.Doc {
 		return doc.BreakGroup(grouped)
 	}
 	return doc.Group(grouped)
+}
+
+func conciseNumbers(els []*ast.Node) bool {
+	n := 0
+	for _, el := range els {
+		if el == nil || el.Kind == ast.KindOmittedExpression || ast.NodeIsMissing(el) {
+			return false
+		}
+		if !isConciseNumber(el) {
+			return false
+		}
+		n++
+	}
+	return n > 1
+}
+
+func isConciseNumber(n *ast.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == ast.KindNumericLiteral {
+		return true
+	}
+	if n.Kind != ast.KindPrefixUnaryExpression {
+		return false
+	}
+	u := n.AsPrefixUnaryExpression()
+	if u.Operator != ast.KindPlusToken && u.Operator != ast.KindMinusToken {
+		return false
+	}
+	return u.Operand != nil && u.Operand.Kind == ast.KindNumericLiteral
+}
+
+// numericFill packs numbers onto a line the way Prettier's array fill does.
+func numericFill(printed []*doc.Doc, trail bool) *doc.Doc {
+	var parts []*doc.Doc
+	for i, el := range printed {
+		item := el
+		last := i == len(printed)-1
+		if !last {
+			item = doc.Concat(el, doc.T(","))
+		} else if trail {
+			item = doc.Concat(el, doc.IfBreak(doc.T(","), nil))
+		}
+		parts = append(parts, item)
+		if !last {
+			parts = append(parts, doc.Line())
+		}
+	}
+	return doc.Fill(parts...)
 }
 
 func (p *Printer) object(n *ast.Node) *doc.Doc {
@@ -646,29 +701,182 @@ func (p *Printer) yield(n *ast.Node) *doc.Doc {
 	return doc.Group(doc.Concat(doc.T(kw), doc.Indent(doc.Concat(doc.Line(), p.node(y.Expression)))))
 }
 
+// conditional prints Prettier's non-experimental ternary (printTernaryOld).
+// The outer test is indented by one level. Each nested alternate adds two
+// columns, not another full indent, so tabWidth 4 stays
+//
+//	cond
+//	    ? a
+//	    : nested
+//	      ? b
+//	      : c
+//
+// A nested consequent is parenthesized only while the chain fits on one line.
 func (p *Printer) conditional(n *ast.Node, isType bool) *doc.Doc {
-	var test, a, b *doc.Doc
-	var opA, opB string
+	var test, cons, alt *doc.Doc
+	var consNode, altNode *ast.Node
+	isParent, isAlternate, isTest := false, false, false
+	jsx := false
+
+	parent := syntacticParent(n)
 	if isType {
 		c := n.AsConditionalTypeNode()
 		test = doc.Concat(p.node(c.CheckType), doc.T(" extends "), p.node(c.ExtendsType))
-		a = p.node(c.TrueType)
-		b = p.node(c.FalseType)
-		opA, opB = "? ", ": "
+		consNode, altNode = c.TrueType, c.FalseType
+		if parent != nil && parent.Kind == ast.KindConditionalType {
+			isParent = true
+			pc := parent.AsConditionalTypeNode()
+			isAlternate = pc.FalseType == n
+			isTest = pc.CheckType == n || pc.ExtendsType == n
+		}
 	} else {
 		c := n.AsConditionalExpression()
+		consNode, altNode = c.WhenTrue, c.WhenFalse
 		test = p.node(c.Condition)
-		a = p.node(c.WhenTrue)
-		b = p.node(c.WhenFalse)
-		opA, opB = "? ", ": "
+		if parent != nil && parent.Kind == ast.KindConditionalExpression {
+			isParent = true
+			pc := parent.AsConditionalExpression()
+			isAlternate = sameTarget(pc.WhenFalse, n)
+			isTest = sameTarget(pc.Condition, n)
+		}
+		jsx = isJSXElement(c.Condition) || isJSXElement(consNode) || isJSXElement(altNode) || ternaryChainHasJSX(outermostTernary(n))
 	}
-	return doc.Group(doc.Concat(
-		test,
-		doc.Indent(doc.Concat(
-			doc.Line(), doc.T(opA), a,
-			doc.Line(), doc.T(opB), b,
-		)),
-	))
+	cons, alt = p.node(consNode), p.node(altNode)
+	if isAlternate && !p.opt.UseTabs {
+		test = doc.Align(2, test)
+	}
+	consTern := isConditionalNode(consNode)
+	altTern := isConditionalNode(altNode)
+
+	var branches *doc.Doc
+	if jsx {
+		branches = doc.Concat(
+			doc.T(" ? "),
+			ternaryJSXBranch(cons, isNilExpr(consNode)),
+			doc.T(" : "),
+			ternaryJSXBranch(alt, altTern || isNilExpr(altNode)),
+		)
+	} else {
+		consDoc := p.ternaryBranch(cons)
+		if consTern {
+			consDoc = doc.Concat(doc.IfBreak(nil, doc.T("(")), consDoc, doc.IfBreak(nil, doc.T(")")))
+		}
+		branches = doc.Concat(
+			doc.Line(), doc.T("? "), consDoc,
+			doc.Line(), doc.T(": "), p.ternaryBranch(alt),
+		)
+		if isParent && !isAlternate && !isTest {
+			branches = p.ternaryConsequentShift(branches)
+		}
+	}
+	var body *doc.Doc
+	if jsx || (isParent && !isTest) {
+		body = doc.Concat(test, branches)
+	} else {
+		body = doc.Concat(test, doc.Indent(branches))
+	}
+	// Only the outermost ternary is a group, so a chain breaks together.
+	if !isParent {
+		return doc.Group(body)
+	}
+	return body
+}
+
+func (p *Printer) ternaryBranch(d *doc.Doc) *doc.Doc {
+	if p.opt.UseTabs {
+		return doc.Indent(d)
+	}
+	return doc.Align(2, d)
+}
+
+// ternaryConsequentShift is the align(tabWidth-2) Prettier applies when a
+// ternary is the consequent of another ternary. With spaces and tabWidth 2
+// that offset is zero; with tabWidth 4 it is two columns.
+func (p *Printer) ternaryConsequentShift(d *doc.Doc) *doc.Doc {
+	if p.opt.UseTabs {
+		return d
+	}
+	n := p.opt.TabWidth - 2
+	if n <= 0 {
+		return d
+	}
+	return doc.Align(n, d)
+}
+
+func ternaryJSXBranch(body *doc.Doc, bare bool) *doc.Doc {
+	if bare {
+		return body
+	}
+	return doc.Concat(
+		doc.IfBreak(doc.T("("), nil),
+		doc.Indent(doc.Concat(doc.SoftLine(), body)),
+		doc.SoftLine(),
+		doc.IfBreak(doc.T(")"), nil),
+	)
+}
+
+func isNilExpr(n *ast.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == ast.KindNullKeyword {
+		return true
+	}
+	return n.Kind == ast.KindIdentifier && n.AsIdentifier().Text == "undefined"
+}
+
+func isConditionalNode(n *ast.Node) bool {
+	for n != nil && n.Kind == ast.KindParenthesizedExpression {
+		n = n.AsParenthesizedExpression().Expression
+	}
+	return n != nil && (n.Kind == ast.KindConditionalExpression || n.Kind == ast.KindConditionalType)
+}
+
+func isJSXElement(n *ast.Node) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Kind {
+	case ast.KindJsxElement, ast.KindJsxSelfClosingElement, ast.KindJsxFragment:
+		return true
+	default:
+		return false
+	}
+}
+
+func outermostTernary(n *ast.Node) *ast.Node {
+	cur := n
+	for {
+		parent := syntacticParent(cur)
+		if parent == nil || parent.Kind != ast.KindConditionalExpression {
+			return cur
+		}
+		if sameTarget(parent.AsConditionalExpression().Condition, cur) {
+			return cur
+		}
+		cur = parent
+	}
+}
+
+func ternaryChainHasJSX(n *ast.Node) bool {
+	if n == nil || n.Kind != ast.KindConditionalExpression {
+		return false
+	}
+	stack := []*ast.Node{n}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		c := cur.AsConditionalExpression()
+		for _, ch := range []*ast.Node{c.Condition, c.WhenTrue, c.WhenFalse} {
+			if isJSXElement(ch) {
+				return true
+			}
+			if ch != nil && ch.Kind == ast.KindConditionalExpression {
+				stack = append(stack, ch)
+			}
+		}
+	}
+	return false
 }
 
 func (p *Printer) binary(n *ast.Node) *doc.Doc {
@@ -680,7 +888,7 @@ func (p *Printer) binary(n *ast.Node) *doc.Doc {
 	if isAssign(op) {
 		return p.withValue(doc.Concat(p.node(b.Left), doc.T(" "), doc.T(scanner.TokenToString(op))), " ", "", b.Right)
 	}
-	ops, operands := p.binaryDocs(n, prec(op))
+	ops, hard, operands := p.binaryDocs(n, prec(op))
 	if len(operands) == 0 {
 		return nil
 	}
@@ -690,12 +898,18 @@ func (p *Printer) binary(n *ast.Node) *doc.Doc {
 	// A op
 	//   B op
 	//   C
-	d := doc.Concat(operands[0], doc.T(" "), doc.T(ops[0]))
+	// Same-line comments stay on the operator (`x || // foo`). A line comment
+	// forces the break so it cannot swallow the next operand.
+	d := doc.Concat(operands[0], doc.T(" "), ops[0])
 	var rest []*doc.Doc
 	for i := 1; i < len(operands); i++ {
-		rest = append(rest, doc.Line(), operands[i])
+		sep := doc.Line()
+		if i-1 < len(hard) && hard[i-1] {
+			sep = doc.HardLine()
+		}
+		rest = append(rest, sep, operands[i])
 		if i < len(ops) {
-			rest = append(rest, doc.T(" "), doc.T(ops[i]))
+			rest = append(rest, doc.T(" "), ops[i])
 		}
 	}
 	tail := doc.Concat(rest...)
@@ -755,9 +969,10 @@ func (p *Printer) sequence(n *ast.Node) *doc.Doc {
 	return doc.Group(doc.Join(doc.Concat(doc.T(","), doc.Line()), parts))
 }
 
-func (p *Printer) binaryDocs(n *ast.Node, level int) (ops []string, operands []*doc.Doc) {
+func (p *Printer) binaryDocs(n *ast.Node, level int) (ops []*doc.Doc, hard []bool, operands []*doc.Doc) {
 	var rights []struct {
 		op   string
+		end  int
 		node *ast.Node
 	}
 	cur := n
@@ -767,18 +982,56 @@ func (p *Printer) binaryDocs(n *ast.Node, level int) (ops []string, operands []*
 		if isAssign(op) || op == ast.KindCommaToken || prec(op) != level {
 			break
 		}
+		end := 0
+		if b.OperatorToken != nil {
+			end = b.OperatorToken.End()
+		}
 		rights = append(rights, struct {
 			op   string
+			end  int
 			node *ast.Node
-		}{scanner.TokenToString(op), b.Right})
+		}{scanner.TokenToString(op), end, b.Right})
 		cur = b.Left
 	}
-	operands = append(operands, p.node(cur))
+	operands = append(operands, p.maybeParen(cur))
 	for i := len(rights) - 1; i >= 0; i-- {
-		ops = append(ops, rights[i].op)
-		operands = append(operands, p.node(rights[i].node))
+		limit := len(p.src) + 1
+		if rights[i].node != nil {
+			limit = p.skip(rights[i].node)
+		}
+		// A line comment after the operator has to end the line, or it
+		// swallows the next operand when the chain is flat.
+		hard = append(hard, p.sameLineLineComment(rights[i].end, limit))
+		ops = append(ops, doc.Concat(doc.T(rights[i].op), p.takeSameLine(rights[i].end, limit)))
+		operands = append(operands, p.maybeParen(rights[i].node))
 	}
-	return ops, operands
+	return ops, hard, operands
+}
+
+func (p *Printer) sameLineLineComment(from, limit int) bool {
+	for i := p.ci; i < len(p.comments) && p.comments[i].start < limit; i++ {
+		c := p.comments[i]
+		if hasNewline(p.src, from, c.start) {
+			return false
+		}
+		if !c.block {
+			return true
+		}
+		from = c.end
+	}
+	return false
+}
+
+// maybeParen prints n, adding parentheses Prettier would insert when the
+// source did not already have them.
+func (p *Printer) maybeParen(n *ast.Node) *doc.Doc {
+	d := p.node(n)
+	// Only binaries grow parentheses here. Other nodes keep the parens the
+	// source already had, via ParenthesizedExpression.
+	if n == nil || n.Kind != ast.KindBinaryExpression || !needsParens(n) {
+		return d
+	}
+	return doc.Concat(doc.T("("), d, doc.T(")"))
 }
 
 func isAssign(k ast.Kind) bool {
@@ -857,7 +1110,23 @@ func (p *Printer) withValue(head *doc.Doc, inline, broken string, value *ast.Nod
 	if hugValue(value) {
 		return doc.Group(doc.Concat(head, doc.T(inline), p.node(value)))
 	}
-	return doc.Group(doc.Concat(head, doc.T(broken), doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(value))))))
+	printed := p.node(value)
+	// A ternary stays on the operator's line and breaks inside itself.
+	// Other values break after the operator, which is what long && chains
+	// and arrow bodies need.
+	if isConditionalNode(value) {
+		return p.fluid(head, broken, printed)
+	}
+	return doc.Group(doc.Concat(head, doc.T(broken), doc.Group(doc.Indent(doc.Concat(doc.Line(), printed)))))
+}
+
+// fluid prints head, the operator, then value. The value can break while the
+// operator stays on the head's line. When that still overflows, the break
+// after the operator wins and the value is indented one more level.
+func (p *Printer) fluid(head *doc.Doc, operator string, value *doc.Doc) *doc.Doc {
+	p.groupSeq++
+	lineGroup := doc.SetGroupID(p.groupSeq, doc.Group(doc.Indent(doc.Line())))
+	return doc.Group(doc.Concat(head, doc.T(operator), lineGroup, doc.IndentIfBreak(p.groupSeq, value)))
 }
 
 // hugValue reports whether value should stay attached to `=`, `:`, or `=>`.

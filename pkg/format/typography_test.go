@@ -242,6 +242,76 @@ func TestArrowBreaksAfterFatArrow(t *testing.T) {
 	}
 }
 
+func TestBinaryParensAndComments(t *testing.T) {
+	opts := DefaultOptions()
+	opts.PrintWidth = 80
+	src := "!(x || y);\n(a && b) || c;\na && b || c;\na + (b + c);\n(a + b) % c;\na & (b + c);\na == 3 ? (a = 1) : (a = 2);\n"
+	out := mustFormat(t, "bit.js", src, opts)
+	want := "!(x || y);\n(a && b) || c;\n(a && b) || c;\na + b + c;\n(a + b) % c;\na & (b + c);\na == 3 ? (a = 1) : (a = 2);\n"
+	if out != want {
+		t.Fatalf("parens:\n%s", out)
+	}
+
+	src = "!(x || // foo\n  y || // bar\n  z);\n"
+	out = mustFormat(t, "c.js", src, opts)
+	if !strings.Contains(out, "x || // foo") || !strings.Contains(out, "y || // bar") {
+		t.Fatalf("comment drifted off the operator:\n%s", out)
+	}
+
+	src = "const numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];\n"
+	out = mustFormat(t, "n.js", src, opts)
+	if !strings.Contains(out, "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,") {
+		t.Fatalf("numbers were not packed:\n%s", out)
+	}
+}
+
+func TestTernaryChainLayout(t *testing.T) {
+	src := "const value = condition1\n? value1\n: condition2\n    ? value2\n    : condition3\n        ? value3\n        : value4;\n\nconst y = A ? B ? C : D : E;\n\nconst z = verylongtestexpressionthatdoesnotfitonthelineatallreallyreallylong\n  ? alsoaverylongconsequentthatisitselfaternary ? yes : no\n  : alternate;\n"
+	opts := DefaultOptions()
+	opts.PrintWidth = 80
+	opts.TabWidth = 2
+	out := mustFormat(t, "tern.js", src, opts)
+	want := "const value = condition1\n" +
+		"  ? value1\n" +
+		"  : condition2\n" +
+		"    ? value2\n" +
+		"    : condition3\n" +
+		"      ? value3\n" +
+		"      : value4;\n" +
+		"\n" +
+		"const y = A ? (B ? C : D) : E;\n" +
+		"\n" +
+		"const z = verylongtestexpressionthatdoesnotfitonthelineatallreallyreallylong\n" +
+		"  ? alsoaverylongconsequentthatisitselfaternary\n" +
+		"    ? yes\n" +
+		"    : no\n" +
+		"  : alternate;\n"
+	if out != want {
+		t.Fatalf("tabWidth 2:\n%s", out)
+	}
+
+	opts.TabWidth = 4
+	out = mustFormat(t, "tern.js", src, opts)
+	want = "const value = condition1\n" +
+		"    ? value1\n" +
+		"    : condition2\n" +
+		"      ? value2\n" +
+		"      : condition3\n" +
+		"        ? value3\n" +
+		"        : value4;\n" +
+		"\n" +
+		"const y = A ? (B ? C : D) : E;\n" +
+		"\n" +
+		"const z = verylongtestexpressionthatdoesnotfitonthelineatallreallyreallylong\n" +
+		"    ? alsoaverylongconsequentthatisitselfaternary\n" +
+		"        ? yes\n" +
+		"        : no\n" +
+		"    : alternate;\n"
+	if out != want {
+		t.Fatalf("tabWidth 4:\n%s", out)
+	}
+}
+
 func TestPackagesLiveUnderPkg(t *testing.T) {
 	root := filepath.Join("..", "..")
 	internal := filepath.Join(root, "internal")

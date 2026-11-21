@@ -33,10 +33,33 @@ func needsParens(n *ast.Node) bool {
 		return leftHandNeedsParens(n, parent)
 	case ast.KindBinaryExpression:
 		return binaryChildNeedsParens(n, parent)
+	case ast.KindConditionalExpression, ast.KindConditionalType:
+		// Nested branches do not need parens. A flat consequent still gets
+		// them from the ternary printer, only while the chain fits one line.
+		return !ternaryBranch(n, parent)
 	case ast.KindParenthesizedExpression:
 		return false
 	default:
 		return true
+	}
+}
+
+func ternaryBranch(n, parent *ast.Node) bool {
+	switch parent.Kind {
+	case ast.KindConditionalExpression:
+		c := parent.AsConditionalExpression()
+		if sameTarget(c.Condition, n) {
+			return false
+		}
+		return sameTarget(c.WhenTrue, n) || sameTarget(c.WhenFalse, n)
+	case ast.KindConditionalType:
+		c := parent.AsConditionalTypeNode()
+		if c.CheckType == n || c.ExtendsType == n {
+			return false
+		}
+		return c.TrueType == n || c.FalseType == n
+	default:
+		return false
 	}
 }
 
@@ -82,33 +105,110 @@ func leftHandNeedsParens(n, parent *ast.Node) bool {
 }
 
 func binaryChildNeedsParens(child, parent *ast.Node) bool {
-	if parent.Kind == ast.KindConditionalExpression {
-		return nodePrec(child) <= precConditional
-	}
-	if parent.Kind != ast.KindBinaryExpression {
+	if child == nil || child.Kind != ast.KindBinaryExpression {
 		return false
 	}
-	b := parent.AsBinaryExpression()
-	op := b.OperatorToken.Kind
-	if isAssign(op) {
-		if sameTarget(b.Right, child) {
-			return false
+	switch parent.Kind {
+	case ast.KindPrefixUnaryExpression, ast.KindPostfixUnaryExpression,
+		ast.KindAwaitExpression, ast.KindTypeOfExpression, ast.KindVoidExpression,
+		ast.KindDeleteExpression, ast.KindTypeAssertionExpression,
+		ast.KindNonNullExpression, ast.KindSpreadElement, ast.KindSpreadAssignment,
+		ast.KindTaggedTemplateExpression, ast.KindAsExpression, ast.KindSatisfiesExpression:
+		return true
+	case ast.KindCallExpression:
+		return isCallee(parent, child)
+	case ast.KindNewExpression:
+		return isNewCallee(parent, child)
+	case ast.KindPropertyAccessExpression, ast.KindElementAccessExpression:
+		return isMemberObject(parent, child)
+	case ast.KindConditionalExpression:
+		op := child.AsBinaryExpression().OperatorToken.Kind
+		// Assignment and comma bind looser than ?:, so the branches need parens.
+		if isAssign(op) || op == ast.KindCommaToken {
+			return true
 		}
-		return nodePrec(child) < prec(op)
-	}
-	cp := nodePrec(child)
-	opPrec := prec(op)
-	if cp > opPrec {
+		return op == ast.KindQuestionQuestionToken
+	case ast.KindBinaryExpression:
+		return binaryInBinary(child, parent)
+	default:
 		return false
 	}
-	if cp < opPrec {
+}
+
+// binaryInBinary matches Prettier 3.6.2's decisions for a parenthesized
+// binary nested in another binary. Same-operator + * && || & | chains drop
+// parens on both sides. / % ** and shifts do not.
+func binaryInBinary(child, parent *ast.Node) bool {
+	cop := child.AsBinaryExpression().OperatorToken.Kind
+	pop := parent.AsBinaryExpression().OperatorToken.Kind
+	if isLogicalOp(cop) && isLogicalOp(pop) && cop != pop {
 		return true
 	}
-	left := sameTarget(b.Left, child)
-	if op == ast.KindAsteriskAsteriskToken {
-		return left
+	cp, pp := prec(cop), prec(pop)
+	if pp > cp {
+		return true
 	}
-	return !left
+	if pp < cp {
+		if cop == ast.KindPercentToken && (pop == ast.KindPlusToken || pop == ast.KindMinusToken) {
+			return true
+		}
+		if isBitwiseOp(pop) {
+			return true
+		}
+		return false
+	}
+	right := sameTarget(parent.AsBinaryExpression().Right, child)
+	if right {
+		return !flattenRight(pop, cop)
+	}
+	return !flattenLeft(pop, cop)
+}
+
+func flattenLeft(parent, child ast.Kind) bool {
+	if parent == child {
+		switch parent {
+		case ast.KindPercentToken, ast.KindAsteriskAsteriskToken,
+			ast.KindLessThanLessThanToken, ast.KindGreaterThanGreaterThanToken,
+			ast.KindGreaterThanGreaterThanGreaterThanToken:
+			return false
+		default:
+			return true
+		}
+	}
+	return isPlusMinus(parent) && isPlusMinus(child)
+}
+
+func flattenRight(parent, child ast.Kind) bool {
+	if parent != child {
+		return false
+	}
+	switch parent {
+	case ast.KindPlusToken, ast.KindMinusToken, ast.KindAsteriskToken,
+		ast.KindAmpersandAmpersandToken, ast.KindBarBarToken, ast.KindQuestionQuestionToken,
+		ast.KindAmpersandToken, ast.KindBarToken, ast.KindCaretToken:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLogicalOp(k ast.Kind) bool {
+	return k == ast.KindAmpersandAmpersandToken || k == ast.KindBarBarToken || k == ast.KindQuestionQuestionToken
+}
+
+func isPlusMinus(k ast.Kind) bool {
+	return k == ast.KindPlusToken || k == ast.KindMinusToken
+}
+
+func isBitwiseOp(k ast.Kind) bool {
+	switch k {
+	case ast.KindAmpersandToken, ast.KindBarToken, ast.KindCaretToken,
+		ast.KindLessThanLessThanToken, ast.KindGreaterThanGreaterThanToken,
+		ast.KindGreaterThanGreaterThanGreaterThanToken:
+		return true
+	default:
+		return false
+	}
 }
 
 func sameTarget(slot, n *ast.Node) bool {

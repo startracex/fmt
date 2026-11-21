@@ -19,6 +19,7 @@ type Doc struct {
 	shouldBreak bool
 	breakDoc    *Doc
 	flatDoc     *Doc
+	n           int
 }
 
 type kind uint8
@@ -29,8 +30,11 @@ const (
 	kindConcat
 	kindGroup
 	kindIndent
+	kindAlign
 	kindLine
 	kindIfBreak
+	kindIndentIfBreak
+	kindFill
 )
 
 // T is literal text. Newlines inside text are preserved and do not gain indent,
@@ -94,6 +98,34 @@ func Group(d *Doc) *Doc {
 	return &Doc{kind: kindGroup, parts: []*Doc{d}}
 }
 
+// SetGroupID marks a group so a later [IndentIfBreak] can see whether it
+// expanded. id must be non-zero.
+func SetGroupID(id int, d *Doc) *Doc {
+	if d == nil || id == 0 {
+		return d
+	}
+	d.n = id
+	return d
+}
+
+// Fill packs parts, which alternate between content and a line. Each line
+// takes as many content pieces as fit, then the line breaks.
+func Fill(parts ...*Doc) *Doc {
+	if len(parts) == 0 {
+		return nil
+	}
+	return &Doc{kind: kindFill, parts: parts}
+}
+
+// IndentIfBreak indents d when the group with id expanded, and prints d
+// unchanged when that group stayed flat.
+func IndentIfBreak(id int, d *Doc) *Doc {
+	if d == nil || id == 0 {
+		return d
+	}
+	return &Doc{kind: kindIndentIfBreak, n: id, parts: []*Doc{d}}
+}
+
 // BreakGroup is a group that always expands.
 func BreakGroup(d *Doc) *Doc {
 	g := Group(d)
@@ -153,6 +185,15 @@ func ContainsHard(d *Doc) bool {
 		}
 	}
 	return false
+}
+
+// Align adds n columns of indent on broken lines inside d, without using a
+// full indent level. Ternary branches use 2 so they line up after "? ".
+func Align(n int, d *Doc) *Doc {
+	if d == nil || n == 0 {
+		return d
+	}
+	return &Doc{kind: kindAlign, n: n, parts: []*Doc{d}}
 }
 
 // Indent increases the indent by one level for breaks inside d.

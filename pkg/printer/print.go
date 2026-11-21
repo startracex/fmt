@@ -26,6 +26,8 @@ type Printer struct {
 	forceQuote bool
 	// forceJSXQuote selects JSX attribute quote style.
 	forceJSXQuote bool
+	// groupSeq assigns ids for groups whose break mode later indents a value.
+	groupSeq int
 }
 
 // New returns a printer for src.
