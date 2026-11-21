@@ -34,14 +34,7 @@ func Source(filename, src string, options Options) (string, error) {
 
 // Parse parses src with tsgo. Syntax errors are returned.
 func Parse(filename, src string) (*ast.SourceFile, error) {
-	name := filename
-	if name == "" {
-		name = "file.ts"
-	}
-	if !strings.HasPrefix(name, "/") {
-		name = "/" + name
-	}
-	path := tspath.RootedFilePathFromNormalized(name)
+	path := rootedFileName(filename)
 	kind := core.EnsureScriptKindFromFileName(path)
 	file := parser.ParseSourceFile(ast.SourceFileParseOptions{
 		FileName: path,
@@ -89,4 +82,18 @@ func (e *SyntaxError) Error() string {
 		return e.Message
 	}
 	return e.File + ": " + e.Message
+}
+
+// rootedFileName turns a user path into the rooted, slash-normalized form tsgo
+// requires. Absolute DOS, UNC, URL, and POSIX paths are normalized in place.
+// Relative paths, including Windows `src\a.ts`, are anchored at `/` so the
+// extension is preserved without pretending a backslash path is POSIX.
+func rootedFileName(name string) tspath.RootedFilePath {
+	if name == "" {
+		name = "file.ts"
+	}
+	if path, ok := tspath.TryRootedFilePathFromAbsolute(name); ok {
+		return path
+	}
+	return tspath.ToRootedFilePath(name, tspath.RootedDirectoryPathFromNormalized("/"))
 }

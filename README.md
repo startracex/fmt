@@ -31,7 +31,14 @@ Formatted extensions: `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cj
 
 ## Config
 
-The nearest `.fmtrc.json`, `fmt.config.json`, `.fmtrc`, or `package.json` `"fmt"` object wins. Flags override the file.
+Options are resolved in this order. A later layer replaces a field only when that layer sets it. An explicit `0` or `false` is a value; an omitted field is not.
+
+1. Built-in defaults
+2. EditorConfig for that file
+3. The nearest fmt config file
+4. CLI flags that were actually passed
+
+The fmt config is the nearest `.fmtrc.json`, `fmt.config.json`, `.fmtrc`, or `package.json` `"fmt"` object.
 
 ```json
 {
@@ -49,6 +56,17 @@ The nearest `.fmtrc.json`, `fmt.config.json`, `.fmtrc`, or `package.json` `"fmt"
 ```
 
 `trailingComma` is `all`, `es5`, or `none`. `arrowParens` is `always` or `avoid`. `endOfLine` is `lf`, `crlf`, or `cr`. `quoteProps` is `as-needed`, `consistent`, or `preserve`.
+
+EditorConfig (`.editorconfig`, walking parents until `root = true`) fills any fmt option it can speak for and that the fmt config left unset:
+
+| EditorConfig | fmt |
+| --- | --- |
+| `max_line_length` | `printWidth` (`off` is ignored) |
+| `indent_style` | `useTabs` |
+| `indent_size` | `tabWidth`, or `useTabs` when the value is `tab` |
+| `tab_width` | `tabWidth` (wins over `indent_size`) |
+| `end_of_line` | `endOfLine` |
+| `quote_type` | `singleQuote` (`single` or `double`; `auto` is ignored) |
 
 ## Library
 

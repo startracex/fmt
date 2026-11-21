@@ -1,6 +1,8 @@
 // Package opt holds formatter options shared by the library and the CLI.
 package opt
 
+import "strings"
+
 // Options controls pretty-printing. Zero values are not the defaults;
 // use [Default].
 type Options struct {
@@ -31,15 +33,95 @@ func Default() Options {
 	}
 }
 
-// Normalized fills empty fields with defaults and clamps illegal values.
+// Partial is a config layer. A nil field is unset and must not override a
+// value from a lower layer, including explicit zeros and false.
+type Partial struct {
+	PrintWidth     *int    `json:"printWidth"`
+	TabWidth       *int    `json:"tabWidth"`
+	UseTabs        *bool   `json:"useTabs"`
+	Semi           *bool   `json:"semi"`
+	SingleQuote    *bool   `json:"singleQuote"`
+	TrailingComma  *string `json:"trailingComma"`
+	BracketSpacing *bool   `json:"bracketSpacing"`
+	ArrowParens    *string `json:"arrowParens"`
+	EndOfLine      *string `json:"endOfLine"`
+	QuoteProps     *string `json:"quoteProps"`
+}
+
+// Merge returns a copy of p with every non-nil field of over applied on top.
+func (p Partial) Merge(over Partial) Partial {
+	if over.PrintWidth != nil {
+		p.PrintWidth = over.PrintWidth
+	}
+	if over.TabWidth != nil {
+		p.TabWidth = over.TabWidth
+	}
+	if over.UseTabs != nil {
+		p.UseTabs = over.UseTabs
+	}
+	if over.Semi != nil {
+		p.Semi = over.Semi
+	}
+	if over.SingleQuote != nil {
+		p.SingleQuote = over.SingleQuote
+	}
+	if over.TrailingComma != nil {
+		p.TrailingComma = over.TrailingComma
+	}
+	if over.BracketSpacing != nil {
+		p.BracketSpacing = over.BracketSpacing
+	}
+	if over.ArrowParens != nil {
+		p.ArrowParens = over.ArrowParens
+	}
+	if over.EndOfLine != nil {
+		p.EndOfLine = over.EndOfLine
+	}
+	if over.QuoteProps != nil {
+		p.QuoteProps = over.QuoteProps
+	}
+	return p
+}
+
+// Resolve fills nil fields from [Default]. Explicit zeros and false stay.
+func (p Partial) Resolve() Options {
+	o := Default()
+	if p.PrintWidth != nil {
+		o.PrintWidth = *p.PrintWidth
+	}
+	if p.TabWidth != nil {
+		o.TabWidth = *p.TabWidth
+	}
+	if p.UseTabs != nil {
+		o.UseTabs = *p.UseTabs
+	}
+	if p.Semi != nil {
+		o.Semi = *p.Semi
+	}
+	if p.SingleQuote != nil {
+		o.SingleQuote = *p.SingleQuote
+	}
+	if p.TrailingComma != nil {
+		o.TrailingComma = strings.ToLower(*p.TrailingComma)
+	}
+	if p.BracketSpacing != nil {
+		o.BracketSpacing = *p.BracketSpacing
+	}
+	if p.ArrowParens != nil {
+		o.ArrowParens = strings.ToLower(*p.ArrowParens)
+	}
+	if p.EndOfLine != nil {
+		o.EndOfLine = strings.ToLower(*p.EndOfLine)
+	}
+	if p.QuoteProps != nil {
+		o.QuoteProps = strings.ToLower(*p.QuoteProps)
+	}
+	return o.Normalized()
+}
+
+// Normalized clamps illegal enum strings. Numeric zeros and false are kept.
 func (o Options) Normalized() Options {
 	d := Default()
-	if o.PrintWidth <= 0 {
-		o.PrintWidth = d.PrintWidth
-	}
-	if o.TabWidth <= 0 {
-		o.TabWidth = d.TabWidth
-	}
 	switch o.TrailingComma {
 	case "all", "es5", "none":
 	default:
@@ -59,6 +141,12 @@ func (o Options) Normalized() Options {
 	case "as-needed", "consistent", "preserve":
 	default:
 		o.QuoteProps = d.QuoteProps
+	}
+	if o.PrintWidth < 0 {
+		o.PrintWidth = d.PrintWidth
+	}
+	if o.TabWidth < 0 {
+		o.TabWidth = d.TabWidth
 	}
 	return o
 }

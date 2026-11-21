@@ -67,6 +67,56 @@ func TestWriteAndCheck(t *testing.T) {
 	}
 }
 
+func TestFlagOverridesConfigAndEditorConfig(t *testing.T) {
+	dir := t.TempDir()
+	src := "function f() {\nreturn 1\n}\n"
+	path := filepath.Join(dir, "a.ts")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ec := "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n"
+	if err := os.WriteFile(filepath.Join(dir, ".editorconfig"), []byte(ec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"--write", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("editorconfig code %d\n%s", code, stderr.String())
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "function f() {\n    return 1;\n}\n" {
+		t.Fatalf("editorconfig indent:\n%s", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".fmtrc.json"), []byte(`{"tabWidth": 0}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main([]string{"--write", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("config code %d\n%s", code, stderr.String())
+	}
+	got, _ = os.ReadFile(path)
+	if string(got) != "function f() {\nreturn 1;\n}\n" {
+		t.Fatalf("explicit tabWidth 0:\n%s", got)
+	}
+
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main([]string{"--write", "--tab-width", "8", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("flag code %d\n%s", code, stderr.String())
+	}
+	got, _ = os.ReadFile(path)
+	if string(got) != "function f() {\n        return 1;\n}\n" {
+		t.Fatalf("flag indent:\n%s", got)
+	}
+}
+
 func TestSyntaxErrorStatus(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.ts")

@@ -11,6 +11,7 @@ import (
 
 	"github.com/startracex/fmt/format"
 	"github.com/startracex/fmt/internal/config"
+	"github.com/startracex/fmt/internal/editorconfig"
 	"github.com/startracex/fmt/internal/ignore"
 	"github.com/startracex/fmt/internal/opt"
 )
@@ -46,7 +47,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	opts := format.DefaultOptions()
+	flags := flagPartial(fs, *printWidth, *tabWidth, *useTabs, *semi, *single, *trailing, *bracket, *arrow, *eol, *quotes)
 	paths := fs.Args()
 	if len(paths) == 0 {
 		data, err := io.ReadAll(os.Stdin)
@@ -54,8 +55,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "stdin: %v\n", err)
 			return 2
 		}
-		opts = resolve(filepath.Dir(*stdinPath), *configPath, opts, stderr)
-		opts = applyFlags(opts, fs, *printWidth, *tabWidth, *useTabs, *semi, *single, *trailing, *bracket, *arrow, *eol, *quotes)
+		opts := resolve(*stdinPath, *configPath, flags, stderr)
 		out, err := format.Source(*stdinPath, string(data), opts)
 		if err != nil {
 			fmt.Fprintf(stderr, "%v\n", err)
@@ -92,8 +92,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	changed := 0
 	failed := 0
 	for _, file := range files {
-		opts = resolve(filepath.Dir(file), *configPath, format.DefaultOptions(), stderr)
-		opts = applyFlags(opts, fs, *printWidth, *tabWidth, *useTabs, *semi, *single, *trailing, *bracket, *arrow, *eol, *quotes)
+		opts := resolve(file, *configPath, flags, stderr)
 		src, err := os.ReadFile(file)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %v\n", file, err)
@@ -130,57 +129,73 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func resolve(dir, explicit string, base opt.Options, stderr io.Writer) opt.Options {
+// resolve applies EditorConfig, then the fmt config file, then explicit CLI flags.
+func resolve(filename, explicit string, flags opt.Partial, stderr io.Writer) opt.Options {
+	var partial opt.Partial
+	if ec, err := editorconfig.Load(filename); err != nil {
+		fmt.Fprintf(stderr, "editorconfig: %v\n", err)
+	} else {
+		partial = partial.Merge(ec)
+	}
+	dir := filepath.Dir(filename)
 	var (
-		opts opt.Options
+		file opt.Partial
 		err  error
 	)
 	if explicit != "" {
-		opts, err = config.LoadFile(explicit, base)
+		file, err = config.LoadFile(explicit)
+	} else if dir != "" && dir != "." {
+		file, err = config.Load(dir)
 	} else {
-		opts, err = config.Load(dir, base)
+		file, err = config.Load(".")
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "config: %v\n", err)
-		return base
+	} else {
+		partial = partial.Merge(file)
 	}
-	return opts
+	return partial.Merge(flags).Resolve()
 }
 
-func applyFlags(base opt.Options, fs *flag.FlagSet, width, tab int, tabs, semi, single bool, trailing string, bracket bool, arrow, eol, quotes string) opt.Options {
+func flagPartial(fs *flag.FlagSet, width, tab int, tabs, semi, single bool, trailing string, bracket bool, arrow, eol, quotes string) opt.Partial {
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	var p opt.Partial
 	if set["print-width"] {
-		base.PrintWidth = width
+		p.PrintWidth = &width
 	}
 	if set["tab-width"] {
-		base.TabWidth = tab
+		p.TabWidth = &tab
 	}
 	if set["use-tabs"] {
-		base.UseTabs = tabs
+		p.UseTabs = &tabs
 	}
 	if set["semi"] {
-		base.Semi = semi
+		p.Semi = &semi
 	}
 	if set["single-quote"] {
-		base.SingleQuote = single
+		p.SingleQuote = &single
 	}
 	if set["trailing-comma"] {
-		base.TrailingComma = strings.ToLower(trailing)
+		v := strings.ToLower(trailing)
+		p.TrailingComma = &v
 	}
 	if set["bracket-spacing"] {
-		base.BracketSpacing = bracket
+		p.BracketSpacing = &bracket
 	}
 	if set["arrow-parens"] {
-		base.ArrowParens = strings.ToLower(arrow)
+		v := strings.ToLower(arrow)
+		p.ArrowParens = &v
 	}
 	if set["end-of-line"] {
-		base.EndOfLine = strings.ToLower(eol)
+		v := strings.ToLower(eol)
+		p.EndOfLine = &v
 	}
 	if set["quote-props"] {
-		base.QuoteProps = strings.ToLower(quotes)
+		v := strings.ToLower(quotes)
+		p.QuoteProps = &v
 	}
-	return base.Normalized()
+	return p
 }
 
 func loadIgnore(explicit string, paths []string) (*ignore.Set, error) {

@@ -13,13 +13,13 @@ import (
 // names are searched from a file's directory upward.
 var names = []string{".fmtrc.json", "fmt.config.json", ".fmtrc"}
 
-// Load merges the nearest config into base. A missing file leaves base unchanged.
-func Load(startDir string, base opt.Options) (opt.Options, error) {
+// Load reads the nearest config. A missing file returns an empty partial.
+func Load(startDir string) (opt.Partial, error) {
 	path, err := Find(startDir)
 	if err != nil || path == "" {
-		return base, err
+		return opt.Partial{}, err
 	}
-	return LoadFile(path, base)
+	return LoadFile(path)
 }
 
 // Find returns the nearest config path, or "" if there is none.
@@ -51,22 +51,23 @@ func Find(startDir string) (string, error) {
 	}
 }
 
-// LoadFile applies a config file onto base.
-func LoadFile(path string, base opt.Options) (opt.Options, error) {
+// LoadFile reads one config file. Unset fields stay nil, including when the
+// file explicitly sets a zero or false.
+func LoadFile(path string) (opt.Partial, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return base, err
+		return opt.Partial{}, err
 	}
 	if filepath.Base(path) == "package.json" {
 		var wrap struct {
 			Fmt json.RawMessage `json:"fmt"`
 		}
 		if err := json.Unmarshal(data, &wrap); err != nil {
-			return base, err
+			return opt.Partial{}, err
 		}
 		data = wrap.Fmt
 	}
-	return apply(data, base)
+	return decode(data)
 }
 
 func packageHasFmt(path string) (bool, error) {
@@ -83,53 +84,24 @@ func packageHasFmt(path string) (bool, error) {
 	return len(wrap.Fmt) > 0 && string(wrap.Fmt) != "null", nil
 }
 
-type file struct {
-	PrintWidth     *int    `json:"printWidth"`
-	TabWidth       *int    `json:"tabWidth"`
-	UseTabs        *bool   `json:"useTabs"`
-	Semi           *bool   `json:"semi"`
-	SingleQuote    *bool   `json:"singleQuote"`
-	TrailingComma  *string `json:"trailingComma"`
-	BracketSpacing *bool   `json:"bracketSpacing"`
-	ArrowParens    *string `json:"arrowParens"`
-	EndOfLine      *string `json:"endOfLine"`
-	QuoteProps     *string `json:"quoteProps"`
-}
-
-func apply(data []byte, base opt.Options) (opt.Options, error) {
-	var f file
-	if err := json.Unmarshal(data, &f); err != nil {
-		return base, err
+func decode(data []byte) (opt.Partial, error) {
+	var partial opt.Partial
+	if len(data) == 0 || string(data) == "null" {
+		return partial, nil
 	}
-	if f.PrintWidth != nil {
-		base.PrintWidth = *f.PrintWidth
+	if err := json.Unmarshal(data, &partial); err != nil {
+		return opt.Partial{}, err
 	}
-	if f.TabWidth != nil {
-		base.TabWidth = *f.TabWidth
+	lower := func(s *string) *string {
+		if s == nil {
+			return nil
+		}
+		v := strings.ToLower(*s)
+		return &v
 	}
-	if f.UseTabs != nil {
-		base.UseTabs = *f.UseTabs
-	}
-	if f.Semi != nil {
-		base.Semi = *f.Semi
-	}
-	if f.SingleQuote != nil {
-		base.SingleQuote = *f.SingleQuote
-	}
-	if f.TrailingComma != nil {
-		base.TrailingComma = strings.ToLower(*f.TrailingComma)
-	}
-	if f.BracketSpacing != nil {
-		base.BracketSpacing = *f.BracketSpacing
-	}
-	if f.ArrowParens != nil {
-		base.ArrowParens = strings.ToLower(*f.ArrowParens)
-	}
-	if f.EndOfLine != nil {
-		base.EndOfLine = strings.ToLower(*f.EndOfLine)
-	}
-	if f.QuoteProps != nil {
-		base.QuoteProps = strings.ToLower(*f.QuoteProps)
-	}
-	return base.Normalized(), nil
+	partial.TrailingComma = lower(partial.TrailingComma)
+	partial.ArrowParens = lower(partial.ArrowParens)
+	partial.EndOfLine = lower(partial.EndOfLine)
+	partial.QuoteProps = lower(partial.QuoteProps)
+	return partial, nil
 }

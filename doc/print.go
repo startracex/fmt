@@ -99,10 +99,10 @@ func (p *printer) writeLine(b *strings.Builder, c cmd, d *Doc) {
 }
 
 func (p *printer) tabWidth() int {
-	if p.opt.TabWidth > 0 {
-		return p.opt.TabWidth
+	if p.opt.TabWidth < 0 {
+		return 2
 	}
-	return 2
+	return p.opt.TabWidth
 }
 
 func (p *printer) writeText(b *strings.Builder, s string) {

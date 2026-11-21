@@ -159,11 +159,8 @@ func Print(root *Doc, opt PrintOptions) string {
 	if root == nil {
 		return ""
 	}
-	if opt.Width <= 0 {
+	if opt.Width < 0 {
 		opt.Width = 80
-	}
-	if opt.IndentUnit == "" {
-		opt.IndentUnit = "  "
 	}
 	propagateBreaks(root)
 	p := &printer{opt: opt, col: 0}
