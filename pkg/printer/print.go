@@ -419,7 +419,32 @@ func (p *Printer) wantSemi(n, next *ast.Node) bool {
 	if p.opt.Semi {
 		return true
 	}
-	return p.startsDangerous(next)
+	if p.startsDangerous(next) {
+		return true
+	}
+	// `get;` must keep its semicolon or the next member is parsed as a getter.
+	return classFieldKeyword(n)
+}
+
+func classFieldKeyword(n *ast.Node) bool {
+	var name *ast.Node
+	switch n.Kind {
+	case ast.KindPropertyDeclaration:
+		name = n.AsPropertyDeclaration().Name()
+	case ast.KindPropertySignature:
+		name = n.AsPropertySignatureDeclaration().Name()
+	default:
+		return false
+	}
+	if name == nil || name.Kind != ast.KindIdentifier {
+		return false
+	}
+	switch name.AsIdentifier().Text {
+	case "get", "set", "static", "async", "accessor":
+		return true
+	default:
+		return false
+	}
 }
 
 // startsDangerous reports whether a following statement would be parsed as a

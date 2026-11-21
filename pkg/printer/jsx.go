@@ -48,8 +48,9 @@ func (p *Printer) jsxElement(n *ast.Node) *doc.Doc {
 		return doc.Concat(open, close)
 	}
 	// Element children always break, and the hard lines propagate so a parent
-	// return or assignment wraps the tag in parentheses.
-	if jsxHasElement(el.Children) {
+	// return or assignment wraps the tag in parentheses. An expression child
+	// that itself contains JSX breaks the same way: <ul>{items.map(...)}</ul>.
+	if jsxHasElement(el.Children) || jsxExprHasElement(el.Children) {
 		return doc.Concat(open, doc.Indent(doc.Concat(doc.HardLine(), doc.Join(doc.HardLine(), parts))), doc.HardLine(), close)
 	}
 	return doc.Group(doc.Concat(
@@ -66,7 +67,7 @@ func (p *Printer) jsxFragment(n *ast.Node) *doc.Doc {
 	if len(parts) == 0 {
 		return doc.T("<></>")
 	}
-	if jsxHasElement(f.Children) {
+	if jsxHasElement(f.Children) || jsxExprHasElement(f.Children) {
 		return doc.Concat(doc.T("<>"), doc.Indent(doc.Concat(doc.HardLine(), doc.Join(doc.HardLine(), parts))), doc.HardLine(), doc.T("</>"))
 	}
 	return doc.Group(doc.Concat(
@@ -75,6 +76,37 @@ func (p *Printer) jsxFragment(n *ast.Node) *doc.Doc {
 		doc.SoftLine(),
 		doc.T("</>"),
 	))
+}
+
+func jsxExprHasElement(list *ast.NodeList) bool {
+	if list == nil {
+		return false
+	}
+	for _, c := range list.Nodes {
+		if c != nil && c.Kind == ast.KindJsxExpression && nodeHasJSX(c.AsJsxExpression().Expression) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeHasJSX(n *ast.Node) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Kind {
+	case ast.KindJsxElement, ast.KindJsxSelfClosingElement, ast.KindJsxFragment:
+		return true
+	}
+	found := false
+	n.ForEachChild(func(c *ast.Node) bool {
+		if nodeHasJSX(c) {
+			found = true
+			return true
+		}
+		return false
+	})
+	return found
 }
 
 func jsxHasElement(list *ast.NodeList) bool {

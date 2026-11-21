@@ -256,39 +256,145 @@ func (p *Printer) template(n *ast.Node) *doc.Doc {
 }
 
 func (p *Printer) chain(n *ast.Node) *doc.Doc {
-	var links []*ast.Node
+	nodes := chainNodes(n)
+	if len(nodes) <= 1 {
+		if len(nodes) == 1 {
+			return p.node(nodes[0])
+		}
+		return p.node(n)
+	}
+	groups := groupChain(nodes)
+	if len(groups) == 0 {
+		return p.node(n)
+	}
+	// A factory callee stays with its first call: Object.keys(x).filter(y).
+	head := groups[0]
+	rest := groups[1:]
+	if len(groups) >= 2 && chainFactory(groups[0]) {
+		head = append(append([]*ast.Node{}, groups[0]...), groups[1]...)
+		rest = groups[2:]
+	}
+	docHead := p.printChainGroup(head)
+	if len(rest) == 0 {
+		return docHead
+	}
+	var tail []*doc.Doc
+	for _, g := range rest {
+		tail = append(tail, p.printChainGroup(g))
+	}
+	return doc.Group(doc.Concat(docHead, doc.Indent(doc.Concat(doc.SoftLine(), doc.Join(doc.SoftLine(), tail)))))
+}
+
+func chainNodes(n *ast.Node) []*ast.Node {
+	var nodes []*ast.Node
 	cur := n
 	for {
+		nodes = append(nodes, cur)
 		next := chainTarget(cur)
 		if next == nil {
 			break
 		}
-		links = append(links, cur)
 		cur = next
 	}
-	for i, j := 0, len(links)-1; i < j; i, j = i+1, j-1 {
-		links[i], links[j] = links[j], links[i]
+	for i, j := 0, len(nodes)-1; i < j; i, j = i+1, j-1 {
+		nodes[i], nodes[j] = nodes[j], nodes[i]
 	}
-	head := p.node(cur)
-	if len(links) == 0 {
-		return head
+	return nodes
+}
+
+// groupChain splits a member/call chain the way Prettier does: the head stays
+// with its first calls, and each later call starts a new line when the chain
+// does not fit.
+func groupChain(nodes []*ast.Node) [][]*ast.Node {
+	if len(nodes) == 0 {
+		return nil
 	}
-	var segs []*doc.Doc
-	indent := false
-	for _, l := range links {
-		if chainBreakBefore(l) {
-			segs = append(segs, doc.SoftLine())
-			indent = true
+	var groups [][]*ast.Node
+	current := []*ast.Node{nodes[0]}
+	i := 1
+	for ; i < len(nodes); i++ {
+		if isChainCall(nodes[i]) || isNumericMember(nodes[i]) {
+			current = append(current, nodes[i])
+			continue
 		}
-		segs = append(segs, p.chainSuffix(l))
+		break
 	}
-	body := doc.Concat(segs...)
-	// A bare call has no break of its own. Indenting it would add a second
-	// level to the argument object when the call does not fit.
-	if indent {
-		body = doc.Indent(body)
+	if !isChainCall(nodes[0]) {
+		for i+1 < len(nodes) && isChainMember(nodes[i]) && isChainMember(nodes[i+1]) {
+			current = append(current, nodes[i])
+			i++
+		}
 	}
-	return doc.Group(doc.Concat(head, body))
+	groups = append(groups, current)
+	current = nil
+	seenCall := false
+	for ; i < len(nodes); i++ {
+		if seenCall && isChainMember(nodes[i]) && !isNumericMember(nodes[i]) {
+			if len(current) > 0 {
+				groups = append(groups, current)
+			}
+			current = nil
+			seenCall = false
+		}
+		if isChainCall(nodes[i]) {
+			seenCall = true
+		}
+		current = append(current, nodes[i])
+	}
+	if len(current) > 0 {
+		groups = append(groups, current)
+	}
+	return groups
+}
+
+func (p *Printer) printChainGroup(nodes []*ast.Node) *doc.Doc {
+	if len(nodes) == 0 {
+		return nil
+	}
+	var parts []*doc.Doc
+	for i, n := range nodes {
+		if i == 0 && chainTarget(n) == nil {
+			parts = append(parts, p.node(n))
+			continue
+		}
+		parts = append(parts, p.chainSuffix(n))
+	}
+	return doc.Concat(parts...)
+}
+
+func chainFactory(group []*ast.Node) bool {
+	if len(group) == 0 {
+		return false
+	}
+	n := group[0]
+	if n.Kind == ast.KindThisKeyword {
+		return true
+	}
+	if n.Kind == ast.KindIdentifier {
+		text := n.AsIdentifier().Text
+		if text == "" {
+			return false
+		}
+		c := text[0]
+		return c >= 'A' && c <= 'Z' || c == '_' || c == '$'
+	}
+	return false
+}
+
+func isChainCall(n *ast.Node) bool {
+	return n != nil && (n.Kind == ast.KindCallExpression || n.Kind == ast.KindTaggedTemplateExpression)
+}
+
+func isChainMember(n *ast.Node) bool {
+	return n != nil && (n.Kind == ast.KindPropertyAccessExpression || n.Kind == ast.KindElementAccessExpression)
+}
+
+func isNumericMember(n *ast.Node) bool {
+	if n == nil || n.Kind != ast.KindElementAccessExpression {
+		return false
+	}
+	arg := n.AsElementAccessExpression().ArgumentExpression
+	return arg != nil && (arg.Kind == ast.KindNumericLiteral || arg.Kind == ast.KindBigIntLiteral)
 }
 
 func chainTarget(n *ast.Node) *ast.Node {

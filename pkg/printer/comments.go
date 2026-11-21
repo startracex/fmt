@@ -256,12 +256,20 @@ func blankBetween(src string, from, to int) bool {
 	if to <= from {
 		return false
 	}
-	n := 0
+	// A blank line is a newline followed only by spaces and another newline.
+	// A comment on its own line is not a blank line.
 	s := src[from:to]
 	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			n++
+		if s[i] != '\n' {
+			continue
+		}
+		j := i + 1
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r') {
+			j++
+		}
+		if j < len(s) && s[j] == '\n' {
+			return true
 		}
 	}
-	return n >= 2
+	return false
 }
