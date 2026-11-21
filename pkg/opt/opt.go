@@ -6,34 +6,40 @@ import "strings"
 // Options controls pretty-printing. Zero values are not the defaults;
 // use [Default].
 type Options struct {
-	PrintWidth     int
-	TabWidth       int
-	UseTabs        bool
-	Semi           bool
-	SingleQuote    bool
-	TrailingComma  string // all, es5, none
-	BracketSpacing bool
-	ArrowParens    string // always, avoid
-	EndOfLine      string // lf, crlf, cr
-	QuoteProps     string // as-needed, consistent, preserve
+	PrintWidth             int
+	TabWidth               int
+	UseTabs                bool
+	Semi                   bool
+	SingleQuote            bool
+	JSXSingleQuote         bool
+	TrailingComma          string // all, es5, none
+	BracketSpacing         bool
+	BracketSameLine        bool
+	SingleAttributePerLine bool
+	ArrowParens            string // always, avoid
+	EndOfLine              string // lf, crlf, cr
+	QuoteProps             string // as-needed, consistent, preserve
 	// ObjectWrap is preserve or collapse. preserve keeps a collection expanded
 	// when the source has a line break after { or [.
 	ObjectWrap string
+	// HTMLWhitespaceSensitivity is css, strict, or ignore.
+	HTMLWhitespaceSensitivity string
 }
 
 // Default returns Prettier-like defaults: width 80, two spaces, semicolons,
 // double quotes, and trailing commas wherever the language allows them.
 func Default() Options {
 	return Options{
-		PrintWidth:     80,
-		TabWidth:       2,
-		Semi:           true,
-		TrailingComma:  "all",
-		BracketSpacing: true,
-		ArrowParens:    "always",
-		EndOfLine:      "lf",
-		QuoteProps:     "as-needed",
-		ObjectWrap:     "preserve",
+		PrintWidth:                80,
+		TabWidth:                  2,
+		Semi:                      true,
+		TrailingComma:             "all",
+		BracketSpacing:            true,
+		ArrowParens:               "always",
+		EndOfLine:                 "lf",
+		QuoteProps:                "as-needed",
+		ObjectWrap:                "preserve",
+		HTMLWhitespaceSensitivity: "css",
 	}
 }
 
@@ -157,6 +163,11 @@ func (o Options) Normalized() Options {
 	case "preserve", "collapse":
 	default:
 		o.ObjectWrap = d.ObjectWrap
+	}
+	switch o.HTMLWhitespaceSensitivity {
+	case "css", "strict", "ignore":
+	default:
+		o.HTMLWhitespaceSensitivity = d.HTMLWhitespaceSensitivity
 	}
 	if o.PrintWidth < 0 {
 		o.PrintWidth = d.PrintWidth

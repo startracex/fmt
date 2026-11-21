@@ -184,7 +184,27 @@ func (p *printer) groupFits(indent int, d *Doc) bool {
 	for i := len(d.parts) - 1; i >= 0; i-- {
 		trial = append(trial, cmd{indent: indent, mode: modeFlat, doc: d.parts[i]})
 	}
-	return fits(trial, p.opt.Width-p.col)
+	return fits(trial, p.opt.Width-p.column())
+}
+
+// column is the column where the next text will be written. A break leaves
+// the indent pending until text arrives, and that indent still consumes width.
+func (p *printer) column() int {
+	if !p.atLineStart {
+		return p.col
+	}
+	n := p.pendingIndent
+	if n <= 0 {
+		return 0
+	}
+	if p.opt.IndentUnit == "\t" {
+		return n * p.tabWidth()
+	}
+	unit := p.opt.IndentUnit
+	if unit == "" {
+		return n * 2
+	}
+	return n * len(unit)
 }
 
 func fits(stack []cmd, width int) bool {

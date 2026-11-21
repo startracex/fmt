@@ -42,6 +42,12 @@ func T(s string) *Doc {
 	return &Doc{kind: kindText, text: s}
 }
 
+// Empty is a present but blank document. Array holes need it so the comma
+// beside them is not dropped.
+func Empty() *Doc {
+	return &Doc{kind: kindText}
+}
+
 // Concat joins documents in order. Nil entries are skipped.
 func Concat(parts ...*Doc) *Doc {
 	flat := make([]*Doc, 0, len(parts))

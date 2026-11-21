@@ -90,6 +90,12 @@ func main() {
 }
 ```
 
+## Prettier compatibility
+
+`go test -run TestPrettierCompat ./pkg/format` replays Prettier 3.6.2's JavaScript, JSX, and TypeScript format snapshots in `testdata/prettier`. Each case uses the options recorded in the snapshot. Flow-only cases, range formatting, and experimental Prettier options are excluded. Syntax tsgo cannot parse is skipped and is not part of the parsed rate.
+
+Current result: **34.62%** of parsed fixtures match (609/1759). Including skips, **30.13%** (609/2021). The breakdown and the remaining failure groups are in [COMPATIBILITY.md](COMPATIBILITY.md).
+
 ## Known differences from Prettier and oxfmt
 
 Imports, classes, control flow, objects, unions, enums, and JSX that contain elements follow Prettier's usual print-width layout, including parentheses around a broken JSX expression. These still differ:
@@ -97,7 +103,7 @@ Imports, classes, control flow, objects, unions, enums, and JSX that contain ele
 - A comment between arguments can move onto the following argument (`f(1 /* c */, 2)` may print as `f(1, /* c */ 2)`). JSDoc is kept as a comment and is not reflowed.
 - JSX text whitespace is collapsed to single spaces. `htmlWhitespaceSensitivity` and `bracketSameLine` are not implemented.
 - Parentheses that are present in the source are kept, other than the ones this printer adds around broken JSX. Prettier also drops parentheses that precedence does not require.
-- Strings are reprinted with the configured quotes. Numbers, bigints, regular expressions, and template text are copied from the source.
+- Strings are reprinted with the configured quotes. Numeric and bigint literals are lowercased. Regular expressions and template text are copied from the source.
 - `semi: false` inserts a semicolon only when the next statement starts with `(`, `[`, `` ` ``, `+`, `-`, or `/`.
 - There is no range formatting, cursor offset, plugin API, or formatting for JSON, CSS, HTML, Markdown, Vue, or Svelte.
 - Files with syntax errors are reported and left unchanged.

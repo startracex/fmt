@@ -10,7 +10,43 @@ import (
 
 func (p *Printer) block(n *ast.Node) *doc.Doc {
 	b := n.AsBlock()
-	return p.braceBlock(listNodes(b.Statements), n.End())
+	stmts := listNodes(b.Statements)
+	if len(filterStmts(stmts)) == 0 {
+		dangle := p.commentLines(p.takeUntil(n.End()))
+		if dangle != nil {
+			return doc.Group(doc.Concat(doc.T("{"), doc.Indent(doc.Concat(doc.HardLine(), dangle)), doc.HardLine(), doc.T("}")))
+		}
+		if emptyBlockBreaks(n) {
+			return doc.Concat(doc.T("{"), doc.HardLine(), doc.T("}"))
+		}
+		return doc.T("{}")
+	}
+	return p.braceBlock(stmts, n.End())
+}
+
+// emptyBlockBreaks matches Prettier: an empty block is `{}` for functions,
+// classic for, while, and do, and `{` newline `}` for if, for-of, try, and
+// other statement blocks.
+func emptyBlockBreaks(n *ast.Node) bool {
+	parent := n.Parent
+	if parent == nil {
+		return true
+	}
+	switch parent.Kind {
+	case ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindFunctionDeclaration,
+		ast.KindMethodDeclaration, ast.KindConstructor, ast.KindGetAccessor, ast.KindSetAccessor,
+		ast.KindForStatement, ast.KindWhileStatement, ast.KindDoStatement,
+		ast.KindModuleDeclaration, ast.KindClassStaticBlockDeclaration:
+		return false
+	case ast.KindCatchClause:
+		tryNode := parent.Parent
+		if tryNode != nil && tryNode.Kind == ast.KindTryStatement && tryNode.AsTryStatement().FinallyBlock == nil {
+			return false
+		}
+		return true
+	default:
+		return true
+	}
 }
 
 func (p *Printer) moduleBlock(n *ast.Node) *doc.Doc {
@@ -156,7 +192,14 @@ func (p *Printer) bindingElem(n *ast.Node) *doc.Doc {
 
 func (p *Printer) ifStmt(n *ast.Node) *doc.Doc {
 	s := n.AsIfStatement()
-	d := doc.Group(doc.Concat(doc.T("if ("), doc.Indent(doc.Concat(doc.SoftLine(), p.node(s.Expression))), doc.SoftLine(), doc.T(")"), p.embedded(s.ThenStatement)))
+	body := doc.Concat(doc.T("if ("), doc.Indent(doc.Concat(doc.SoftLine(), p.node(s.Expression))), doc.SoftLine(), doc.T(")"), p.embedded(s.ThenStatement))
+	// A chain of braceless ifs breaks even when it would fit on one line.
+	var d *doc.Doc
+	if s.ThenStatement != nil && s.ThenStatement.Kind == ast.KindIfStatement {
+		d = doc.BreakGroup(body)
+	} else {
+		d = doc.Group(body)
+	}
 	if s.ElseStatement == nil {
 		return d
 	}
@@ -686,7 +729,7 @@ func (p *Printer) member(n *ast.Node) *doc.Doc {
 		return nil
 	case ast.KindClassStaticBlockDeclaration:
 		b := n.AsClassStaticBlockDeclaration()
-		return doc.Concat(p.modifiers(n), p.node(b.Body))
+		return doc.Concat(doc.T("static "), p.node(b.Body))
 	case ast.KindConstructor:
 		c := n.AsConstructorDeclaration()
 		d := doc.Concat(p.modifiers(n), doc.T("constructor"), p.typeParams(c.TypeParameters), p.params(c.Parameters), p.returnType(c.Type))

@@ -13,7 +13,66 @@ import (
 func (p *Printer) array(n *ast.Node) *doc.Doc {
 	a := n.AsArrayLiteralExpression()
 	els := listNodes(a.Elements)
-	return p.commaGroupBreak("[", "]", els, n.End(), opt.TrailArray, false, p.preserveOpen(n, '[', els), true)
+	var parts []*doc.Doc
+	var printed []*doc.Doc
+	count := 0
+	lastHole := false
+	for _, el := range els {
+		if el == nil {
+			continue
+		}
+		hole := el.Kind == ast.KindOmittedExpression || ast.NodeIsMissing(el)
+		var item *doc.Doc
+		if !hole {
+			item = p.node(el)
+			if item != nil {
+				printed = append(printed, item)
+			}
+		} else {
+			item = p.node(el)
+		}
+		if count > 0 {
+			parts = append(parts, doc.T(","), doc.Line())
+		}
+		if item != nil {
+			parts = append(parts, item)
+		}
+		lastHole = hole
+		count++
+	}
+	if count == 0 {
+		dangle := p.commentLines(p.takeUntil(n.End()))
+		if dangle == nil {
+			return doc.T("[]")
+		}
+		return doc.Group(doc.Concat(doc.T("["), doc.Indent(doc.Concat(doc.HardLine(), dangle)), doc.HardLine(), doc.T("]")))
+	}
+	body := doc.Concat(parts...)
+	if lastHole {
+		body = doc.Concat(body, doc.T(","))
+	} else if p.opt.Trailing(opt.TrailArray) {
+		body = doc.Concat(body, doc.IfBreak(doc.T(","), nil))
+	}
+	force := p.preserveOpen(n, '[', els)
+	if !force {
+		for _, el := range printed {
+			if doc.ForcesBreak(el) {
+				force = true
+				break
+			}
+		}
+	}
+	dangle := p.commentLines(p.takeUntil(n.End()))
+	inner := doc.Concat(doc.SoftLine(), body)
+	if dangle != nil {
+		inner = doc.Concat(inner, doc.HardLine(), dangle)
+		force = true
+	}
+	grouped := doc.Concat(doc.T("["), doc.Indent(inner), doc.SoftLine(), doc.T("]"))
+	if force {
+		return doc.BreakGroup(grouped)
+	}
+	return doc.Group(grouped)
 }
 
 func (p *Printer) object(n *ast.Node) *doc.Doc {
@@ -533,7 +592,45 @@ func (p *Printer) binary(n *ast.Node) *doc.Doc {
 			rest = append(rest, doc.T(" "), doc.T(ops[i]))
 		}
 	}
-	return doc.Group(doc.Concat(d, doc.Indent(doc.Concat(rest...))))
+	tail := doc.Concat(rest...)
+	if binaryIndents(n) {
+		tail = doc.Indent(tail)
+	}
+	return doc.Group(doc.Concat(d, tail))
+}
+
+// binaryIndents reports whether a broken chain of operators indents the
+// operands after the first. Assignment, return, and control-flow conditions
+// already indent the whole expression, so a second level would drift.
+func binaryIndents(n *ast.Node) bool {
+	parent := n.Parent
+	if parent == nil {
+		return true
+	}
+	switch parent.Kind {
+	case ast.KindIfStatement, ast.KindWhileStatement, ast.KindDoStatement, ast.KindSwitchStatement,
+		ast.KindReturnStatement, ast.KindThrowStatement, ast.KindForStatement,
+		ast.KindForInStatement, ast.KindForOfStatement,
+		ast.KindVariableDeclaration, ast.KindPropertyAssignment, ast.KindBindingElement,
+		ast.KindPropertyDeclaration, ast.KindEnumMember,
+		ast.KindTemplateSpan, ast.KindTemplateExpression, ast.KindConditionalExpression,
+		ast.KindArrowFunction:
+		return false
+	case ast.KindBinaryExpression:
+		if isAssign(parent.AsBinaryExpression().OperatorToken.Kind) {
+			return false
+		}
+		return true
+	case ast.KindCallExpression:
+		if parent.AsCallExpression().Expression == n {
+			return false
+		}
+		return true
+	case ast.KindParenthesizedExpression:
+		return binaryIndents(parent)
+	default:
+		return true
+	}
 }
 
 func (p *Printer) sequence(n *ast.Node) *doc.Doc {

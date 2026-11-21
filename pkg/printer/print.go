@@ -24,6 +24,8 @@ type Printer struct {
 	lastEnd  int
 	// forceQuote makes every string-like property name quoted.
 	forceQuote bool
+	// forceJSXQuote selects JSX attribute quote style.
+	forceJSXQuote bool
 }
 
 // New returns a printer for src.
@@ -104,7 +106,9 @@ func (p *Printer) body(n *ast.Node) *doc.Doc {
 		return doc.T(privateText(n))
 	case ast.KindStringLiteral:
 		return doc.T(p.stringLiteral(n))
-	case ast.KindNumericLiteral, ast.KindBigIntLiteral, ast.KindRegularExpressionLiteral, ast.KindNoSubstitutionTemplateLiteral:
+	case ast.KindNumericLiteral, ast.KindBigIntLiteral:
+		return doc.T(strings.ToLower(p.raw(n)))
+	case ast.KindRegularExpressionLiteral, ast.KindNoSubstitutionTemplateLiteral:
 		return doc.T(p.raw(n))
 	case ast.KindThisKeyword, ast.KindSuperKeyword, ast.KindImportKeyword,
 		ast.KindNullKeyword, ast.KindTrueKeyword, ast.KindFalseKeyword:
@@ -276,7 +280,7 @@ func (p *Printer) dispatch(n *ast.Node) *doc.Doc {
 	case ast.KindShorthandPropertyAssignment:
 		return p.shorthand(n)
 	case ast.KindOmittedExpression:
-		return nil
+		return doc.Empty()
 	case ast.KindPartiallyEmittedExpression:
 		return p.node(n.AsPartiallyEmittedExpression().Expression)
 
@@ -357,7 +361,11 @@ func privateText(n *ast.Node) string {
 
 func (p *Printer) stringLiteral(n *ast.Node) string {
 	lit := n.AsStringLiteral()
-	return quote(lit.Text, useSingle(lit.Text, p.opt.SingleQuote))
+	single := p.opt.SingleQuote
+	if p.forceJSXQuote {
+		single = p.opt.JSXSingleQuote
+	}
+	return quote(lit.Text, useSingle(lit.Text, single))
 }
 
 func (p *Printer) statements(nodes []*ast.Node) *doc.Doc {

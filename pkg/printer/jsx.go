@@ -143,13 +143,16 @@ func (p *Printer) jsxOpen(n *ast.Node, self bool) *doc.Doc {
 		return doc.Concat(head, doc.T(">"))
 	}
 	end := ">"
+	endBreak := doc.SoftLine()
 	if self {
+		// A space before `/>` when the tag fits; a break before it when it does not.
 		end = "/>"
+		endBreak = doc.Line()
 	}
 	return doc.Group(doc.Concat(
 		head,
 		doc.Indent(doc.Concat(doc.Line(), attrDoc)),
-		doc.SoftLine(),
+		endBreak,
 		doc.T(end),
 	))
 }
@@ -202,7 +205,10 @@ func (p *Printer) jsxAttrValue(n *ast.Node) *doc.Doc {
 		return nil
 	}
 	if n.Kind == ast.KindStringLiteral {
-		return doc.T(p.stringLiteral(n))
+		p.forceJSXQuote = true
+		d := doc.T(p.stringLiteral(n))
+		p.forceJSXQuote = false
+		return d
 	}
 	return p.node(n)
 }
