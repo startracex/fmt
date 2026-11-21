@@ -92,7 +92,7 @@ func (p *Printer) typeNode(n *ast.Node) *doc.Doc {
 	case ast.KindConditionalType:
 		return p.conditional(n, true)
 	case ast.KindTypeLiteral:
-		return p.memberList(n.AsTypeLiteralNode().Members, n.End())
+		return p.memberList(n.AsTypeLiteralNode().Members, n.End(), false)
 	case ast.KindFunctionType:
 		f := n.AsFunctionTypeNode()
 		return doc.Group(doc.Concat(p.typeParams(f.TypeParameters), p.params(f.Parameters), doc.T(" => "), p.node(f.Type)))
@@ -116,6 +116,13 @@ func (p *Printer) typeNode(n *ast.Node) *doc.Doc {
 }
 
 func (p *Printer) unionish(list *ast.NodeList, op string) *doc.Doc {
+	return doc.Group(p.unionParts(list, op))
+}
+
+// unionParts breaks with whichever group encloses it. Type aliases use this
+// directly so a union that does not fit beside `type Name =` expands to
+// leading `|` lines instead of a long continuation.
+func (p *Printer) unionParts(list *ast.NodeList, op string) *doc.Doc {
 	nodes := listNodes(list)
 	if len(nodes) == 0 {
 		return nil
@@ -124,9 +131,7 @@ func (p *Printer) unionish(list *ast.NodeList, op string) *doc.Doc {
 	for _, n := range nodes[1:] {
 		parts = append(parts, doc.Line(), doc.T(op), doc.T(" "), p.node(n))
 	}
-	// A leading operator when the group breaks matches Prettier's union layout
-	// inside an indented position (`type T =\n  | A\n  | B`).
-	return doc.Group(doc.Concat(doc.IfBreak(doc.T(op+" "), nil), doc.Concat(parts...)))
+	return doc.Concat(doc.IfBreak(doc.T(op+" "), nil), doc.Concat(parts...))
 }
 
 func (p *Printer) namedTuple(n *ast.Node) *doc.Doc {
@@ -170,7 +175,7 @@ func (p *Printer) mapped(n *ast.Node) *doc.Doc {
 		inner = doc.Concat(inner, doc.T(": "), p.node(m.Type))
 	}
 	if m.Members != nil && len(m.Members.Nodes) > 0 {
-		inner = doc.Concat(inner, doc.T("; "), p.memberList(m.Members, n.End()))
+		inner = doc.Concat(inner, doc.T("; "), p.memberList(m.Members, n.End(), false))
 	}
 	return doc.Group(doc.Concat(doc.T("{ "), inner, doc.T(" }")))
 }

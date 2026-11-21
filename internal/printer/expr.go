@@ -61,6 +61,10 @@ func propertyNameOf(n *ast.Node) *ast.Node {
 }
 
 func (p *Printer) commaGroup(open, close string, nodes []*ast.Node, end int, trail opt.TrailKind, bracketSpace bool) *doc.Doc {
+	return p.commaGroupBreak(open, close, nodes, end, trail, bracketSpace, false)
+}
+
+func (p *Printer) commaGroupBreak(open, close string, nodes []*ast.Node, end int, trail opt.TrailKind, bracketSpace, force bool) *doc.Doc {
 	var elems []*doc.Doc
 	for _, n := range nodes {
 		if n == nil || ast.NodeIsMissing(n) {
@@ -73,12 +77,13 @@ func (p *Printer) commaGroup(open, close string, nodes []*ast.Node, end int, tra
 		return doc.T(open + close)
 	}
 	var body *doc.Doc
-	force := false
 	if len(elems) > 0 {
-		for _, el := range elems {
-			if doc.ContainsHard(el) {
-				force = true
-				break
+		if !force {
+			for _, el := range elems {
+				if doc.ContainsHard(el) {
+					force = true
+					break
+				}
 			}
 		}
 		body = doc.Join(doc.Concat(doc.T(","), doc.Line()), elems)
@@ -465,6 +470,9 @@ func (p *Printer) arrow(n *ast.Node) *doc.Doc {
 	head = doc.Concat(head, p.returnType(a.Type), doc.T(" =>"))
 	if a.Body != nil && a.Body.Kind == ast.KindBlock {
 		return doc.Concat(head, doc.T(" "), p.node(a.Body))
+	}
+	if jsx, ok := jsxInner(a.Body); ok {
+		return doc.Concat(head, p.jsxBreak(" ", " (", jsx))
 	}
 	return doc.Group(doc.Concat(head, doc.Indent(doc.Concat(doc.Line(), p.node(a.Body)))))
 }

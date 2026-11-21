@@ -42,14 +42,19 @@ func (p *Printer) jsx(n *ast.Node) *doc.Doc {
 func (p *Printer) jsxElement(n *ast.Node) *doc.Doc {
 	el := n.AsJsxElement()
 	open := p.jsxOpen(el.OpeningElement, false)
-	children := p.jsxChildren(el.Children)
 	close := p.jsxClose(el.ClosingElement)
-	if children == nil {
+	parts := p.jsxParts(el.Children)
+	if len(parts) == 0 {
 		return doc.Concat(open, close)
+	}
+	// Element children always break, and the hard lines propagate so a parent
+	// return or assignment wraps the tag in parentheses.
+	if jsxHasElement(el.Children) {
+		return doc.Concat(open, doc.Indent(doc.Concat(doc.HardLine(), doc.Join(doc.HardLine(), parts))), doc.HardLine(), close)
 	}
 	return doc.Group(doc.Concat(
 		open,
-		doc.Indent(doc.Concat(doc.SoftLine(), children)),
+		doc.Indent(doc.Concat(doc.SoftLine(), doc.Join(doc.SoftLine(), parts))),
 		doc.SoftLine(),
 		close,
 	))
@@ -57,19 +62,38 @@ func (p *Printer) jsxElement(n *ast.Node) *doc.Doc {
 
 func (p *Printer) jsxFragment(n *ast.Node) *doc.Doc {
 	f := n.AsJsxFragment()
-	children := p.jsxChildren(f.Children)
-	if children == nil {
+	parts := p.jsxParts(f.Children)
+	if len(parts) == 0 {
 		return doc.T("<></>")
+	}
+	if jsxHasElement(f.Children) {
+		return doc.Concat(doc.T("<>"), doc.Indent(doc.Concat(doc.HardLine(), doc.Join(doc.HardLine(), parts))), doc.HardLine(), doc.T("</>"))
 	}
 	return doc.Group(doc.Concat(
 		doc.T("<>"),
-		doc.Indent(doc.Concat(doc.SoftLine(), children)),
+		doc.Indent(doc.Concat(doc.SoftLine(), doc.Join(doc.SoftLine(), parts))),
 		doc.SoftLine(),
 		doc.T("</>"),
 	))
 }
 
-func (p *Printer) jsxChildren(list *ast.NodeList) *doc.Doc {
+func jsxHasElement(list *ast.NodeList) bool {
+	if list == nil {
+		return false
+	}
+	for _, c := range list.Nodes {
+		if c == nil {
+			continue
+		}
+		switch c.Kind {
+		case ast.KindJsxElement, ast.KindJsxSelfClosingElement, ast.KindJsxFragment:
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Printer) jsxParts(list *ast.NodeList) []*doc.Doc {
 	if list == nil {
 		return nil
 	}
@@ -88,10 +112,7 @@ func (p *Printer) jsxChildren(list *ast.NodeList) *doc.Doc {
 		}
 		parts = append(parts, p.node(c))
 	}
-	if len(parts) == 0 {
-		return nil
-	}
-	return doc.Join(doc.SoftLine(), parts)
+	return parts
 }
 
 func collapseJSXText(s string) string {

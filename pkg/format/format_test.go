@@ -79,7 +79,7 @@ func TestCorpus(t *testing.T) {
 }
 
 func TestFixtures(t *testing.T) {
-	root := filepath.Join("..", "testdata", "fixtures")
+	root := filepath.Join("..", "..", "testdata", "fixtures")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)

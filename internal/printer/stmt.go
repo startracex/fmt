@@ -109,7 +109,11 @@ func (p *Printer) nameInit(name *doc.Doc, definite bool, typ, init *ast.Node) *d
 		d = doc.Concat(d, doc.T(": "), p.node(typ))
 	}
 	if init != nil {
-		d = doc.Group(doc.Concat(d, doc.T(" ="), doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(init))))))
+		if jsx, ok := jsxInner(init); ok {
+			d = doc.Concat(d, p.jsxBreak(" = ", " = (", jsx))
+		} else {
+			d = doc.Group(doc.Concat(d, doc.T(" ="), doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(init))))))
+		}
 	}
 	return d
 }
@@ -257,7 +261,43 @@ func (p *Printer) returnStmt(n *ast.Node) *doc.Doc {
 	if e == nil {
 		return doc.T("return")
 	}
+	if jsx, ok := jsxInner(e); ok {
+		return p.jsxBreak("return ", "return (", jsx)
+	}
 	return doc.Group(doc.Concat(doc.T("return"), doc.Indent(doc.Concat(doc.Line(), p.node(e)))))
+}
+
+// jsxBreak prints a JSX expression. The flat form has no parentheses. The
+// broken form wraps it so a newline after return or `=` is not parsed as ASI.
+func (p *Printer) jsxBreak(flat, broken string, n *ast.Node) *doc.Doc {
+	return doc.Group(doc.Concat(
+		doc.IfBreak(doc.T(broken), doc.T(flat)),
+		doc.Indent(doc.Concat(doc.SoftLine(), p.node(n))),
+		doc.SoftLine(),
+		doc.IfBreak(doc.T(")"), nil),
+	))
+}
+
+func isJSX(n *ast.Node) bool {
+	_, ok := jsxInner(n)
+	return ok
+}
+
+// jsxInner unwraps parentheses around JSX so a formatted file parses back to
+// the same shape.
+func jsxInner(n *ast.Node) (*ast.Node, bool) {
+	for n != nil && n.Kind == ast.KindParenthesizedExpression {
+		n = n.AsParenthesizedExpression().Expression
+	}
+	if n == nil {
+		return nil, false
+	}
+	switch n.Kind {
+	case ast.KindJsxElement, ast.KindJsxSelfClosingElement, ast.KindJsxFragment:
+		return n, true
+	default:
+		return nil, false
+	}
 }
 
 func (p *Printer) switchStmt(n *ast.Node) *doc.Doc {
@@ -418,7 +458,7 @@ func (p *Printer) classBody(members *ast.NodeList, end int) *doc.Doc {
 	for i, n := range kept {
 		if i > 0 {
 			parts = append(parts, doc.HardLine())
-			if memberGap(kept[i-1], n) {
+			if blankBetween(p.src, kept[i-1].End(), p.skip(n)) {
 				parts = append(parts, doc.HardLine())
 			}
 		}
@@ -428,19 +468,6 @@ func (p *Printer) classBody(members *ast.NodeList, end int) *doc.Doc {
 		parts = append(parts, doc.HardLine(), dangle)
 	}
 	return doc.Group(doc.Concat(doc.T("{"), doc.Indent(doc.Concat(doc.HardLine(), doc.Concat(parts...))), doc.HardLine(), doc.T("}")))
-}
-
-func memberGap(prev, cur *ast.Node) bool {
-	return methodLike(prev) || methodLike(cur)
-}
-
-func methodLike(n *ast.Node) bool {
-	switch n.Kind {
-	case ast.KindMethodDeclaration, ast.KindConstructor, ast.KindGetAccessor, ast.KindSetAccessor, ast.KindClassStaticBlockDeclaration:
-		return true
-	default:
-		return false
-	}
 }
 
 func (p *Printer) iface(n *ast.Node) *doc.Doc {
@@ -453,18 +480,30 @@ func (p *Printer) iface(n *ast.Node) *doc.Doc {
 		}
 		d = doc.Concat(d, doc.T(" "), doc.Join(doc.T(" "), hs))
 	}
-	return doc.Concat(d, doc.T(" "), p.memberList(i.Members, n.End()))
+	return doc.Concat(d, doc.T(" "), p.memberList(i.Members, n.End(), true))
 }
 
 func (p *Printer) typeAlias(n *ast.Node) *doc.Doc {
 	t := typeAliasData(n)
+	var body *doc.Doc
+	if t.Type != nil && (t.Type.Kind == ast.KindUnionType || t.Type.Kind == ast.KindIntersectionType) {
+		op := "|"
+		list := t.Type.AsUnionTypeNode().Types
+		if t.Type.Kind == ast.KindIntersectionType {
+			op = "&"
+			list = t.Type.AsIntersectionTypeNode().Types
+		}
+		body = p.unionParts(list, op)
+	} else {
+		body = p.node(t.Type)
+	}
 	return doc.Group(doc.Concat(
 		p.modifiers(n),
 		doc.T("type "),
 		p.node(t.Name()),
 		p.typeParams(t.TypeParameters),
 		doc.T(" ="),
-		doc.Group(doc.Indent(doc.Concat(doc.Line(), p.node(t.Type)))),
+		doc.Indent(doc.Concat(doc.Line(), body)),
 	))
 }
 
@@ -474,7 +513,8 @@ func (p *Printer) enum(n *ast.Node) *doc.Doc {
 }
 
 func (p *Printer) enumBody(members *ast.NodeList, end int) *doc.Doc {
-	return p.commaGroup("{", "}", listNodes(members), end, opt.TrailObject, p.opt.BracketSpacing)
+	nodes := listNodes(members)
+	return p.commaGroupBreak("{", "}", nodes, end, opt.TrailObject, p.opt.BracketSpacing, len(nodes) > 0)
 }
 
 func (p *Printer) enumMember(n *ast.Node) *doc.Doc {
@@ -714,33 +754,45 @@ func (p *Printer) propDecl(n *ast.Node, name, postfix, typ, init *ast.Node) *doc
 	return p.nameInit(d, false, typ, init)
 }
 
-func (p *Printer) memberList(list *ast.NodeList, end int) *doc.Doc {
+func (p *Printer) memberList(list *ast.NodeList, end int, expand bool) *doc.Doc {
 	nodes := listNodes(list)
 	if len(nodes) == 0 {
 		if dangle := p.commentLines(p.takeUntil(end)); dangle != nil {
-			return doc.Concat(doc.T("{"), doc.Indent(doc.Concat(doc.HardLine(), dangle)), doc.HardLine(), doc.T("}"))
+			return doc.Group(doc.Concat(doc.T("{"), doc.Indent(doc.Concat(doc.HardLine(), dangle)), doc.HardLine(), doc.T("}")))
 		}
 		return doc.T("{}")
 	}
-	parts := make([]*doc.Doc, 0, len(nodes))
-	for i, n := range nodes {
+	var parts []*doc.Doc
+	for _, n := range nodes {
 		if n == nil || ast.NodeIsMissing(n) {
 			continue
 		}
-		parts = append(parts, p.finish(n, nextStmt(nodes, i+1)))
+		parts = append(parts, p.node(n))
 	}
-	// finish already printed semicolons when semi is enabled.
-	body := doc.Join(doc.Line(), parts)
+	sep := doc.Line()
+	if p.opt.Semi {
+		sep = doc.Concat(doc.T(";"), doc.Line())
+	}
+	body := doc.Join(sep, parts)
+	if p.opt.Semi {
+		body = doc.Concat(body, doc.IfBreak(doc.T(";"), nil))
+	}
 	openBreak := doc.SoftLine()
 	if p.opt.BracketSpacing {
 		openBreak = doc.Line()
 	}
 	dangle := p.commentLines(p.takeUntil(end))
 	inner := doc.Concat(openBreak, body)
+	force := expand
 	if dangle != nil {
 		inner = doc.Concat(inner, doc.HardLine(), dangle)
+		force = true
 	}
-	return doc.Group(doc.Concat(doc.T("{"), doc.Indent(inner), openBreak, doc.T("}")))
+	grouped := doc.Concat(doc.T("{"), doc.Indent(inner), openBreak, doc.T("}"))
+	if force {
+		return doc.BreakGroup(grouped)
+	}
+	return doc.Group(grouped)
 }
 
 func (p *Printer) parameter(n *ast.Node) *doc.Doc {

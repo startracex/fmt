@@ -6,8 +6,6 @@
 // and nested groups are measured again.
 package doc
 
-import "strings"
-
 // Doc is one node in a pretty-document.
 //
 // Documents are treated as immutable after they are passed to [Print], except
@@ -163,14 +161,14 @@ func Print(root *Doc, opt PrintOptions) string {
 		opt.Width = 80
 	}
 	propagateBreaks(root)
-	p := &printer{opt: opt, col: 0}
-	p.stack = []cmd{{doc: root}}
-	var b strings.Builder
+	p := &printer{opt: opt, col: 0, atLineStart: true}
+	// The root is in break mode so each group is measured, matching Prettier.
+	p.stack = []cmd{{mode: modeBreak, doc: root}}
 	for len(p.stack) > 0 {
 		c := p.pop()
-		p.printCmd(&b, c)
+		p.printCmd(c)
 	}
-	return b.String()
+	return string(p.out)
 }
 
 // propagateBreaks marks groups that contain a hard break so they expand.

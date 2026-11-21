@@ -1,8 +1,8 @@
 # fmt
 
-A TypeScript and JavaScript formatter. It parses with [tsgo](https://github.com/startracex/tsgo) and reprints the AST through a width-aware document, in the same spirit as Prettier and oxfmt. It does not call tsgo's language-service formatter (`pkg/format`); that package only adjusts whitespace and will not wrap to a print width.
+A TypeScript and JavaScript formatter. It parses with [tsgo](https://github.com/startracex/tsgo) and reprints the AST through a width-aware document, in the same spirit as Prettier and oxfmt. The printer does not call tsgo's language-service formatter. That API only tweaks whitespace and will not wrap to a print width.
 
-The output aims at Prettier's defaults (print width 80, indent 2, semicolons, double quotes, trailing commas). It is not a byte-for-byte Prettier or oxfmt match. Differences are listed below.
+The library is `pkg/format`. The command is `cmd/fmt`. Defaults match Prettier (print width 80, indent 2, semicolons, double quotes, trailing commas). Remaining differences are listed below.
 
 ## Install
 
@@ -77,7 +77,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/startracex/fmt/format"
+	"github.com/startracex/fmt/pkg/format"
 )
 
 func main() {
@@ -91,16 +91,13 @@ func main() {
 
 ## Known differences from Prettier and oxfmt
 
-This is an MVP printer. It will keep growing toward those tools; it does not match them today.
+Imports, classes, control flow, objects, unions, enums, and JSX that contain elements follow Prettier's usual print-width layout, including parentheses around a broken JSX expression. These still differ:
 
-- Wrapping follows print width, but many of Prettier's special cases are missing: hug-style call breaking, member-chain layout, JSX parentheses in `return`, experimental ternaries, and operator-position options.
-- Binary and logical chains break before the next line at one indent. A chain that is itself the right-hand side of a broken assignment can pick up an extra indent level.
-- Comments are kept and attached from the gaps between tokens. A comment between arguments can move onto the following argument (`f(1 /* c */, 2)` may print as `f(1, /* c */ 2)`). JSDoc is preserved as a comment, not reflowed.
-- JSX whitespace is collapsed. Text and elements that fit stay on one line; Prettier's HTML-whitespace and bracket-same-line rules are not implemented.
-- Explicit parentheses in the AST are preserved. Prettier drops parentheses that precedence does not require.
-- Strings are reprinted with the configured quote and normal escapes. Template text is copied from the source. Numbers, bigints, and regular expressions are copied unchanged.
-- `semi: false` omits semicolons except where the next statement starts with `(`, `[`, `` ` ``, `+`, `-`, or `/`. That is a smaller ASI guard than Prettier's.
-- Type-literal members use semicolons when `semi` is on, including a semicolon before `}`.
+- A comment between arguments can move onto the following argument (`f(1 /* c */, 2)` may print as `f(1, /* c */ 2)`). JSDoc is kept as a comment and is not reflowed.
+- JSX text whitespace is collapsed to single spaces. `htmlWhitespaceSensitivity` and `bracketSameLine` are not implemented.
+- Parentheses that are present in the source are kept, other than the ones this printer adds around broken JSX. Prettier also drops parentheses that precedence does not require.
+- Strings are reprinted with the configured quotes. Numbers, bigints, regular expressions, and template text are copied from the source.
+- `semi: false` inserts a semicolon only when the next statement starts with `(`, `[`, `` ` ``, `+`, `-`, or `/`.
 - There is no range formatting, cursor offset, plugin API, or formatting for JSON, CSS, HTML, Markdown, Vue, or Svelte.
 - Files with syntax errors are reported and left unchanged.
 

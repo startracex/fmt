@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/startracex/fmt/format"
 	"github.com/startracex/fmt/internal/config"
 	"github.com/startracex/fmt/internal/editorconfig"
 	"github.com/startracex/fmt/internal/ignore"
 	"github.com/startracex/fmt/internal/opt"
+	"github.com/startracex/fmt/pkg/format"
 )
 
 // Main runs the formatter and returns a process status.

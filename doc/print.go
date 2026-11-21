@@ -16,9 +16,12 @@ type cmd struct {
 }
 
 type printer struct {
-	opt   PrintOptions
-	stack []cmd
-	col   int
+	opt           PrintOptions
+	stack         []cmd
+	col           int
+	out           []byte
+	atLineStart   bool
+	pendingIndent int
 }
 
 func (p *printer) pop() cmd {
@@ -34,22 +37,21 @@ func (p *printer) push(indent int, m mode, d *Doc) {
 	p.stack = append(p.stack, cmd{indent: indent, mode: m, doc: d})
 }
 
-func (p *printer) printCmd(b *strings.Builder, c cmd) {
+func (p *printer) printCmd(c cmd) {
 	if c.doc == nil {
 		return
 	}
 	d := c.doc
 	switch d.kind {
 	case kindText:
-		p.writeText(b, d.text)
+		p.writeText(d.text)
 	case kindConcat:
 		for i := len(d.parts) - 1; i >= 0; i-- {
 			p.push(c.indent, c.mode, d.parts[i])
 		}
 	case kindIndent:
-		// Indent applies only when this group is already breaking. A flat
-		// group keeps nested breaks at the current level, so a block on the
-		// right of `=` does not pick up a second indent.
+		// A flat group does not indent, so a block that follows `=>` on the
+		// same line stays at the current level. Broken groups indent.
 		next := c.indent
 		if c.mode == modeBreak {
 			next++
@@ -57,14 +59,18 @@ func (p *printer) printCmd(b *strings.Builder, c cmd) {
 		p.push(next, c.mode, d.parts[0])
 	case kindGroup:
 		m := modeFlat
-		if d.shouldBreak || !p.groupFits(c.indent, d) {
-			m = modeBreak
+		// A flat parent forces its groups flat unless they contain a hard break.
+		// Otherwise measure, the same rule Prettier uses from a broken root.
+		if c.mode == modeBreak || d.shouldBreak {
+			if d.shouldBreak || !p.groupFits(c.indent, d) {
+				m = modeBreak
+			}
 		}
 		for i := len(d.parts) - 1; i >= 0; i-- {
 			p.push(c.indent, m, d.parts[i])
 		}
 	case kindLine:
-		p.writeLine(b, c, d)
+		p.writeLine(c, d)
 	case kindIfBreak:
 		if c.mode == modeBreak {
 			p.push(c.indent, c.mode, d.breakDoc)
@@ -75,26 +81,53 @@ func (p *printer) printCmd(b *strings.Builder, c cmd) {
 	}
 }
 
-func (p *printer) writeLine(b *strings.Builder, c cmd, d *Doc) {
+func (p *printer) writeLine(c cmd, d *Doc) {
 	if c.mode == modeFlat && !d.hard {
 		if !d.soft {
-			b.WriteByte(' ')
-			p.col++
+			p.writeText(" ")
 		}
 		return
 	}
-	b.WriteByte('\n')
+	p.trimTrailingSpace()
+	p.out = append(p.out, '\n')
+	p.col = 0
+	p.atLineStart = true
+	p.pendingIndent = c.indent
+}
+
+// pending indent is stored in col until content is written, so a blank line
+// produced by two breaks in a row does not keep leftover spaces.
+func (p *printer) writeIndent() {
+	if !p.atLineStart {
+		return
+	}
+	n := p.pendingIndent
+	p.pendingIndent = 0
+	p.atLineStart = false
+	if n <= 0 {
+		return
+	}
 	if p.opt.IndentUnit == "\t" {
-		for i := 0; i < c.indent; i++ {
-			b.WriteByte('\t')
+		for i := 0; i < n; i++ {
+			p.out = append(p.out, '\t')
 		}
-		p.col = c.indent * p.tabWidth()
-	} else {
-		unit := p.opt.IndentUnit
-		for i := 0; i < c.indent; i++ {
-			b.WriteString(unit)
+		p.col = n * p.tabWidth()
+		return
+	}
+	unit := p.opt.IndentUnit
+	for i := 0; i < n; i++ {
+		p.out = append(p.out, unit...)
+	}
+	p.col = n * len(unit)
+}
+
+func (p *printer) trimTrailingSpace() {
+	for len(p.out) > 0 {
+		last := p.out[len(p.out)-1]
+		if last != ' ' && last != '\t' {
+			break
 		}
-		p.col = c.indent * len(unit)
+		p.out = p.out[:len(p.out)-1]
 	}
 }
 
@@ -105,17 +138,27 @@ func (p *printer) tabWidth() int {
 	return p.opt.TabWidth
 }
 
-func (p *printer) writeText(b *strings.Builder, s string) {
+func (p *printer) writeText(s string) {
+	if s == "" {
+		return
+	}
 	for {
 		i := strings.IndexByte(s, '\n')
 		if i < 0 {
-			b.WriteString(s)
+			p.writeIndent()
+			p.out = append(p.out, s...)
 			p.col += widthOf(s)
 			return
 		}
-		b.WriteString(s[:i])
-		b.WriteByte('\n')
+		if i > 0 {
+			p.writeIndent()
+			p.out = append(p.out, s[:i]...)
+		}
+		p.trimTrailingSpace()
+		p.out = append(p.out, '\n')
 		p.col = 0
+		p.atLineStart = true
+		p.pendingIndent = 0
 		s = s[i+1:]
 	}
 }
@@ -188,18 +231,12 @@ func fits(stack []cmd, width int) bool {
 				s = append(s, cmd{indent: c.indent, mode: c.mode, doc: d.flatDoc})
 			}
 		case kindGroup:
-			m := modeFlat
+			// Measure the group as flat unless it must break. Nested groups
+			// are not allowed to break on their own during this check, so an
+			// outer group only fits when its whole first line fits.
+			m := c.mode
 			if d.shouldBreak {
 				m = modeBreak
-			} else {
-				inner := make([]cmd, len(s), len(s)+len(d.parts))
-				copy(inner, s)
-				for i := len(d.parts) - 1; i >= 0; i-- {
-					inner = append(inner, cmd{indent: c.indent, mode: modeFlat, doc: d.parts[i]})
-				}
-				if !fits(inner, width) {
-					m = modeBreak
-				}
 			}
 			for i := len(d.parts) - 1; i >= 0; i-- {
 				s = append(s, cmd{indent: c.indent, mode: m, doc: d.parts[i]})
