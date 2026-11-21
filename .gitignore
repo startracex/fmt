@@ -1,0 +1,4 @@
+/fmt
+*.exe
+*.test
+/bin/
